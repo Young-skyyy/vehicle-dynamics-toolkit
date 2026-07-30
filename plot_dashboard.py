@@ -60,9 +60,7 @@ def plot_dashboard(vehicle=None, save_path=None):
     plt.tight_layout(rect=[0, 0, 1, 0.97])
 
     if save_path is None:
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_path = f"dashboard_{timestamp}.png"
+        save_path = "dashboard.png"
 
     plt.savefig(save_path, dpi=150)
     print(f"[仪表盘已保存] {save_path}")
