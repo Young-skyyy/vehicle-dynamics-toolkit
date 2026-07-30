@@ -33,6 +33,50 @@ def calc_cornering_forces(vehicle: Vehicle, alpha_f: float,
     return Fyf, Fyr
 
 
+def calc_pacejka_lateral_force(B: float, C: float, D: float, E: float,
+                                alpha: float) -> float:
+    """Pacejka 魔术公式 — 纯侧偏工况轮胎侧向力 (N)。
+
+    Fy(α) = D · sin(C · arctan(B·α - E·(B·α - arctan(B·α))))
+
+    Args:
+        B: 刚度因子，B·C·D = 小侧偏角下的侧偏刚度 (1/rad)
+        C: 形状因子（典型值 1.1~1.5）
+        D: 峰值因子 ≈ 轴荷 (N)
+        E: 曲率因子，控制峰值附近的曲率
+        alpha: 侧偏角 (rad)
+
+    Returns:
+        侧向力 (N)，正值表示与侧偏角同向。
+        calc_slip_angles 已保证 α 正负含义正确，此处直接计算 magnitude。
+    """
+    Bx = B * alpha
+    Fy = D * math.sin(C * math.atan(Bx - E * (Bx - math.atan(Bx))))
+    return float(Fy)
+
+
+def calc_pacejka_cornering_forces(vehicle: Vehicle, alpha_f: float,
+                                   alpha_r: float) -> tuple[float, float]:
+    """Pacejka 魔术公式轮胎模型: 前后轴侧向力 (N)。
+
+    返回的 Fy 为带符号的侧向力：
+    - 侧偏角 > 0（正侧向滑动）→ Fy > 0（力与 α 同向）
+    - 公式本身输出 magnitude，这里根据 α 的符号赋予方向。
+    """
+    # Pacejka 公式的输入是侧偏角的绝对值，输出是力的大小
+    # 侧向力方向与侧偏角同向（在 SAE 坐标系中）
+    Fyf_mag = calc_pacejka_lateral_force(
+        vehicle.pacejka_B_f, vehicle.pacejka_C_f,
+        vehicle.pacejka_D_f, vehicle.pacejka_E_f, alpha_f)
+    Fyr_mag = calc_pacejka_lateral_force(
+        vehicle.pacejka_B_r, vehicle.pacejka_C_r,
+        vehicle.pacejka_D_r, vehicle.pacejka_E_r, alpha_r)
+
+    # 在 SAE 坐标系中：侧偏角为正时侧向力应为负（与转向方向相反）
+    # 2-DOF 状态方程中 dvy = (Fyf+Fyr)/m - vx·r，Fy 取负正符合物理
+    return -Fyf_mag, -Fyr_mag
+
+
 def calc_understeer_gradient(vehicle: Vehicle) -> tuple[float, float]:
     """不足转向梯度 Kus = Wf/Cf - Wr/Cr (rad/g, deg/g)
 
@@ -109,11 +153,20 @@ def calc_steady_state_cornering(vehicle: Vehicle, vx_kmh: float,
 
 def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
                         steer_angle_deg: float, duration_s: float = 5,
-                        dt: float = 0.01) -> list[tuple[float, float, float, float, float]]:
+                        dt: float = 0.01,
+                        tire_model: str = "linear") -> list[tuple[float, float, float, float, float]]:
     """阶跃转向瞬态响应：给定车速和方向盘转角，仿真横摆响应
 
-    使用 2-DOF 线性自行车模型，欧拉积分
+    使用 2-DOF 自行车模型，欧拉积分
     状态变量: [vy, r]（侧向速度、横摆角速度）
+
+    Args:
+        vehicle:          车辆对象
+        vx_kmh:           纵向车速 (km/h)
+        steer_angle_deg:  方向盘转角 (deg)
+        duration_s:       仿真时长 (s)
+        dt:               积分步长 (s)
+        tire_model:       轮胎模型 "linear"（线性 Fy=-Cα·α）或 "pacejka"（魔术公式）
 
     Returns:
         每个元素为 (t, vy, r_rad, r_deg, ay_g)
@@ -124,8 +177,6 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
     Iz = vehicle.yaw_inertia
     a = vehicle.cg_to_front
     b = vehicle.cg_to_rear
-    Cf = vehicle.cornering_stiffness_f
-    Cr = vehicle.cornering_stiffness_r
 
     # 初始状态
     vy = 0.0
@@ -138,9 +189,14 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
         alpha_f = (vy + a * r) / vx - delta if vx > 0 else 0.0
         alpha_r = (vy - b * r) / vx if vx > 0 else 0.0
 
-        # 侧向力
-        Fyf = -Cf * alpha_f
-        Fyr = -Cr * alpha_r
+        # 侧向力 — 根据 tire_model 选择线性或 Pacejka
+        if tire_model == "pacejka":
+            Fyf, Fyr = calc_pacejka_cornering_forces(vehicle, alpha_f, alpha_r)
+        else:
+            Cf = vehicle.cornering_stiffness_f
+            Cr = vehicle.cornering_stiffness_r
+            Fyf = -Cf * alpha_f
+            Fyr = -Cr * alpha_r
 
         # 状态方程
         dvy = (Fyf + Fyr) / m - vx * r
@@ -201,9 +257,15 @@ def calc_steady_cornering_table(vehicle: Vehicle) -> list[dict]:
 
 
 def calc_step_steer_response(vehicle: Vehicle, vx_kmh: float = 80,
-                             steer_deg: float = 3) -> dict:
-    """阶跃转向瞬态响应，返回结构化数据。"""
-    history = simulate_step_steer(vehicle, vx_kmh, steer_deg, duration_s=3)
+                             steer_deg: float = 3,
+                             tire_model: str = "linear") -> dict:
+    """阶跃转向瞬态响应，返回结构化数据。
+
+    Args:
+        tire_model: "linear" 或 "pacejka"
+    """
+    history = simulate_step_steer(vehicle, vx_kmh, steer_deg, duration_s=3,
+                                   tire_model=tire_model)
     result = calc_steady_state_cornering(vehicle, vx_kmh, steer_deg)
     _, _, _, final_r, final_ay = history[-1]
 
@@ -213,4 +275,5 @@ def calc_step_steer_response(vehicle: Vehicle, vx_kmh: float = 80,
         "steady_lateral_acc": result["lateral_acc_g"],
         "final_yaw_rate": final_r,
         "final_lateral_acc": final_ay,
+        "tire_model": tire_model,
     }

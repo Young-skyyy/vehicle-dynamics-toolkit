@@ -88,7 +88,17 @@ class Vehicle:
                  cg_to_front_m: float | None = None,
                  cornering_stiffness_f: float | None = None,
                  cornering_stiffness_r: float | None = None,
-                 yaw_inertia: float | None = None):
+                 yaw_inertia: float | None = None,
+                 # Pacejka 魔术公式轮胎参数（前轴）
+                 pacejka_B_f: float | None = None,
+                 pacejka_C_f: float | None = None,
+                 pacejka_D_f: float | None = None,
+                 pacejka_E_f: float | None = None,
+                 # Pacejka 魔术公式轮胎参数（后轴）
+                 pacejka_B_r: float | None = None,
+                 pacejka_C_r: float | None = None,
+                 pacejka_D_r: float | None = None,
+                 pacejka_E_r: float | None = None):
         self.name: str = name
         self.mass: float = mass_kg
         self.power: float = power_kw * 1000          # 发动机功率（W）
@@ -119,6 +129,19 @@ class Vehicle:
         self.cornering_stiffness_r: float = cornering_stiffness_r or 70000
         # 横摆转动惯量（kg·m²），估算公式 Iz ≈ m × a × b
         self.yaw_inertia: float = yaw_inertia or self.mass * self.cg_to_front * self.cg_to_rear
+        # ---- Pacejka 魔术公式轮胎参数 ----
+        # D = 峰值侧向力 ≈ 轴荷 (N/rad)；B·C·D = cornering_stiffness，确保小侧偏角时与线性模型一致
+        # 估计前后轴荷
+        _Wf_axle = self.mass * G * self.cg_to_rear / self.wheelbase
+        _Wr_axle = self.mass * G * self.cg_to_front / self.wheelbase
+        self.pacejka_C_f: float = pacejka_C_f or 1.3
+        self.pacejka_D_f: float = pacejka_D_f or _Wf_axle
+        self.pacejka_B_f: float = pacejka_B_f or (self.cornering_stiffness_f / (self.pacejka_C_f * self.pacejka_D_f))
+        self.pacejka_E_f: float = pacejka_E_f or 0.0
+        self.pacejka_C_r: float = pacejka_C_r or 1.3
+        self.pacejka_D_r: float = pacejka_D_r or _Wr_axle
+        self.pacejka_B_r: float = pacejka_B_r or (self.cornering_stiffness_r / (self.pacejka_C_r * self.pacejka_D_r))
+        self.pacejka_E_r: float = pacejka_E_r or 0.0
 
     def select_gear(self, speed_kmh: float) -> int:
         """根据车速选择合适档位（简化的经济性换挡策略）"""

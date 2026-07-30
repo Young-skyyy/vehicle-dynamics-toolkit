@@ -25,6 +25,8 @@ from vehicle import (
 from lateral_dynamics import (
     calc_slip_angles,
     calc_cornering_forces,
+    calc_pacejka_lateral_force,
+    calc_pacejka_cornering_forces,
     calc_understeer_gradient,
     calc_characteristic_speed,
     calc_critical_speed,
@@ -908,3 +910,167 @@ class TestACCSimulation:
     def test_gap_never_negative(self):
         data = acc_simulation()
         assert min(data["gap_m"]) >= 0, "间距不应为负"
+
+
+# ---- Pacejka 魔术公式轮胎模型测试 ----
+
+class TestPacejkaLateralForce:
+    """calc_pacejka_lateral_force — Pacejka 魔术公式核心"""
+
+    @pytest.fixture
+    def pacejka_params(self):
+        """典型乘用车轮胎参数：cornering_stiffness ≈ 80000 N/rad"""
+        C, D = 1.3, 4000.0
+        B = 80000 / (C * D)  # B·C·D = cornering_stiffness
+        return {"B": B, "C": C, "D": D, "E": 0.0}
+
+    def test_zero_slip_zero_force(self, pacejka_params):
+        """侧偏角为 0 时应无侧向力"""
+        Fy = calc_pacejka_lateral_force(**pacejka_params, alpha=0)
+        assert Fy == pytest.approx(0, abs=1e-6)
+
+    def test_small_alpha_matches_linear(self, pacejka_params):
+        """小侧偏角（< 2°）时 Pacejka ≈ 线性 Fy = Cα·α"""
+        alpha = math.radians(1.0)  # 1°
+        Fy_pacejka = calc_pacejka_lateral_force(**pacejka_params, alpha=alpha)
+        Fy_linear = 80000 * abs(alpha)  # Cα × |α|
+        # 1° 时偏差应 < 5%（Pacejka 在小角度有轻微非线性）
+        assert Fy_pacejka == pytest.approx(Fy_linear, rel=0.05)
+
+    def test_large_alpha_saturates(self, pacejka_params):
+        """大侧偏角时力饱和，不再线性增长"""
+        alpha_small = math.radians(3)
+        alpha_large = math.radians(12)
+        Fy_small = calc_pacejka_lateral_force(**pacejka_params, alpha=alpha_small)
+        Fy_large = calc_pacejka_lateral_force(**pacejka_params, alpha=alpha_large)
+        # 饱和后增长远低于线性
+        ratio = Fy_large / Fy_small
+        linear_ratio = 12 / 3
+        assert ratio < linear_ratio, (
+            f"Pacejka 饱和比 {ratio:.2f} 应 < 线性比 {linear_ratio:.2f}"
+        )
+
+    def test_peak_not_exceed_D(self, pacejka_params):
+        """侧向力不应超过峰值因子 D"""
+        for deg in [1, 3, 5, 8, 12, 20]:
+            alpha = math.radians(deg)
+            Fy = calc_pacejka_lateral_force(**pacejka_params, alpha=alpha)
+            assert Fy <= pacejka_params["D"] * 1.05, (
+                f"α={deg}° 时侧向力 {Fy:.0f} 超过 D={pacejka_params['D']:.0f}"
+            )
+
+    def test_force_increases_with_alpha_in_linear_range(self, pacejka_params):
+        """侧偏角增大 → 侧向力增大（在线性区）"""
+        Fy1 = calc_pacejka_lateral_force(**pacejka_params, alpha=math.radians(1))
+        Fy2 = calc_pacejka_lateral_force(**pacejka_params, alpha=math.radians(2))
+        assert Fy2 > Fy1
+
+    def test_E_curvature_effect(self):
+        """曲率因子 E 不为零时力曲线形状改变"""
+        b, c, d, e0, alpha = 15.38, 1.3, 4000.0, 0.0, math.radians(5)
+        fy_flat = calc_pacejka_lateral_force(B=b, C=c, D=d, E=e0, alpha=alpha)
+        fy_curved = calc_pacejka_lateral_force(B=b, C=c, D=d, E=-0.5, alpha=alpha)
+        # E = -0.5 使力更大（向峰值上方弯曲）
+        assert fy_curved > fy_flat
+
+
+class TestPacejkaCorneringForces:
+    """calc_pacejka_cornering_forces — 整车前后轴 Pacejka 力"""
+
+    @pytest.fixture
+    def pacejka_car(self):
+        return Vehicle("PacejkaCar", 1500, 100, drag_coeff=0.28,
+                       wheelbase_m=2.65, cg_to_front_m=1.2,
+                       cornering_stiffness_f=80000, cornering_stiffness_r=70000,
+                       max_torque_nm=180)
+
+    def test_zero_slip_zero_forces(self, pacejka_car):
+        Fyf, Fyr = calc_pacejka_cornering_forces(pacejka_car, 0.0, 0.0)
+        assert Fyf == pytest.approx(0, abs=1e-6)
+        assert Fyr == pytest.approx(0, abs=1e-6)
+
+    def test_positive_slip_negative_force(self, pacejka_car):
+        """SAE 坐标系：正侧偏角 → 负侧向力"""
+        Fyf, Fyr = calc_pacejka_cornering_forces(pacejka_car,
+                                                   math.radians(3),
+                                                   math.radians(2))
+        assert Fyf < 0, "正侧偏角应产生负侧向力"
+        assert Fyr < 0
+
+    def test_small_alpha_close_to_linear(self, pacejka_car):
+        """小侧偏角时 Pacejka 力 ≈ 线性模型力"""
+        alpha_f = math.radians(1.5)
+        alpha_r = math.radians(1.0)
+        Fyf_p, Fyr_p = calc_pacejka_cornering_forces(pacejka_car, alpha_f, alpha_r)
+        Fyf_l, Fyr_l = calc_cornering_forces(pacejka_car, alpha_f, alpha_r)
+        assert Fyf_p == pytest.approx(Fyf_l, rel=0.05)
+        assert Fyr_p == pytest.approx(Fyr_l, rel=0.05)
+
+
+class TestStepSteerPacejka:
+    """simulate_step_steer with tire_model="pacejka" """
+
+    @pytest.fixture
+    def pacejka_car(self):
+        return Vehicle("PacejkaCar", 1500, 100, drag_coeff=0.28,
+                       wheelbase_m=2.65, cg_to_front_m=1.2,
+                       cornering_stiffness_f=80000, cornering_stiffness_r=70000,
+                       max_torque_nm=180)
+
+    def test_pacejka_runs_without_error(self, pacejka_car):
+        """Pacejka 模型可正常仿真"""
+        history = simulate_step_steer(pacejka_car, 60, 3, duration_s=2,
+                                       tire_model="pacejka")
+        assert len(history) > 0
+        assert all(len(h) == 5 for h in history)
+
+    def test_pacejka_converges(self, pacejka_car):
+        """Pacejka 模型应收敛到稳态附近"""
+        history = simulate_step_steer(pacejka_car, 60, 3, duration_s=5,
+                                       tire_model="pacejka")
+        _, _, _, final_r_deg, _ = history[-1]
+        result = calc_steady_state_cornering(pacejka_car, 60, 3)
+        # Pacejka 的稳态与线性不同，但应大致接近
+        assert final_r_deg > 0
+        assert final_r_deg == pytest.approx(result["yaw_rate_deg_s"], rel=0.25)
+
+    def test_pacejka_vs_linear_small_steer_close(self, pacejka_car):
+        """小转角（1°）时 Pacejka ≈ 线性"""
+        h_lin = simulate_step_steer(pacejka_car, 60, 1, duration_s=2,
+                                     tire_model="linear")
+        h_pac = simulate_step_steer(pacejka_car, 60, 1, duration_s=2,
+                                     tire_model="pacejka")
+        _, _, _, r_lin, _ = h_lin[-1]
+        _, _, _, r_pac, _ = h_pac[-1]
+        assert r_pac == pytest.approx(r_lin, rel=0.10)
+
+    def test_pacejka_large_steer_different_from_linear(self, pacejka_car):
+        """大转角（8°）时 Pacejka 应明显偏离线性（饱和效应）"""
+        h_lin = simulate_step_steer(pacejka_car, 60, 8, duration_s=2,
+                                     tire_model="linear")
+        h_pac = simulate_step_steer(pacejka_car, 60, 8, duration_s=2,
+                                     tire_model="pacejka")
+        _, _, _, r_lin, _ = h_lin[-1]
+        _, _, _, r_pac, _ = h_pac[-1]
+        # 大转角时轮胎饱和 → Pacejka 横摆角速度应小于线性预测
+        assert r_pac < r_lin, (
+            f"大转角饱和效应：Pacejka {r_pac:.2f} 应 < 线性 {r_lin:.2f}"
+        )
+
+    def test_calc_step_steer_response_pacejka(self, pacejka_car):
+        """calc_step_steer_response 支持 tire_model 参数"""
+        data = calc_step_steer_response(pacejka_car, vx_kmh=80, steer_deg=3,
+                                         tire_model="pacejka")
+        assert data["tire_model"] == "pacejka"
+        assert "history" in data
+        assert data["final_yaw_rate"] > 0
+
+    def test_vehicle_has_pacejka_params(self, pacejka_car):
+        """Vehicle 对象自动初始化 Pacejka 参数"""
+        assert pacejka_car.pacejka_B_f > 0
+        assert pacejka_car.pacejka_C_f > 0
+        assert pacejka_car.pacejka_D_f > 0
+        assert pacejka_car.pacejka_B_r > 0
+        # B·C·D 应等于 cornering_stiffness
+        slope_f = pacejka_car.pacejka_B_f * pacejka_car.pacejka_C_f * pacejka_car.pacejka_D_f
+        assert slope_f == pytest.approx(pacejka_car.cornering_stiffness_f, rel=0.01)
