@@ -154,7 +154,7 @@ def calc_steady_state_cornering(vehicle: Vehicle, vx_kmh: float,
 def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
                         steer_angle_deg: float, duration_s: float = 5,
                         dt: float = 0.01,
-                        tire_model: str = "linear") -> list[tuple[float, float, float, float, float]]:
+                        tire_model: str = "linear") -> list[dict]:
     """阶跃转向瞬态响应：给定车速和方向盘转角，仿真横摆响应
 
     使用 2-DOF 自行车模型，欧拉积分
@@ -169,7 +169,7 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
         tire_model:       轮胎模型 "linear"（线性 Fy=-Cα·α）或 "pacejka"（魔术公式）
 
     Returns:
-        每个元素为 (t, vy, r_rad, r_deg, ay_g)
+        list[dict]，每步含: time, vy, yaw_rate_rad, yaw_rate_deg, lateral_acc_g
     """
     vx = vx_kmh * KMH_TO_MS
     delta = math.radians(steer_angle_deg)
@@ -182,7 +182,7 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
     vy = 0.0
     r = 0.0
 
-    history: list[tuple[float, float, float, float, float]] = []
+    history: list[dict] = []
     t = 0.0
     while t <= duration_s:
         # 前后轮侧偏角
@@ -202,7 +202,13 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
         dvy = (Fyf + Fyr) / m - vx * r
         dr = (a * Fyf - b * Fyr) / Iz
 
-        history.append((t, vy, r, math.degrees(r), vx * r / G))
+        history.append({
+            "time": round(t, 4),
+            "vy": round(vy, 6),
+            "yaw_rate_rad": round(r, 6),
+            "yaw_rate_deg": round(math.degrees(r), 3),
+            "lateral_acc_g": round(vx * r / G, 6),
+        })
 
         # 欧拉积分
         vy += dvy * dt
@@ -267,7 +273,9 @@ def calc_step_steer_response(vehicle: Vehicle, vx_kmh: float = 80,
     history = simulate_step_steer(vehicle, vx_kmh, steer_deg, duration_s=3,
                                    tire_model=tire_model)
     result = calc_steady_state_cornering(vehicle, vx_kmh, steer_deg)
-    _, _, _, final_r, final_ay = history[-1]
+    final = history[-1]
+    final_r = final["yaw_rate_deg"]
+    final_ay = final["lateral_acc_g"]
 
     return {
         "history": history,

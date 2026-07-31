@@ -201,8 +201,8 @@ def _draw_step_steer_panel(ax, vehicle):
     has_font, _ = setup_chinese_font()  # 有缓存，不会重复检测
     history = simulate_step_steer(vehicle, vx_kmh=80, steer_angle_deg=3, duration_s=3)
 
-    times = [h[0] for h in history]
-    r_deg = [h[3] for h in history]
+    times = [h["time"] for h in history]
+    r_deg = [h["yaw_rate_deg"] for h in history]
 
     # 稳态理论值
     result = calc_steady_state_cornering(vehicle, 80, 3)

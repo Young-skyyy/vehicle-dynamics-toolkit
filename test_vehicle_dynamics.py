@@ -691,23 +691,24 @@ class TestStepSteerSimulation:
         history = simulate_step_steer(lat_sedan, 60, 3, duration_s=2)
         assert len(history) > 0
 
-    def test_history_elements_are_five_tuples(self, lat_sedan):
+    def test_history_elements_are_dicts_with_keys(self, lat_sedan):
         history = simulate_step_steer(lat_sedan, 60, 3, duration_s=1)
-        assert all(len(h) == 5 for h in history)
+        required_keys = {"time", "vy", "yaw_rate_rad", "yaw_rate_deg", "lateral_acc_g"}
+        for h in history:
+            assert required_keys.issubset(set(h.keys())), f"Missing keys in {h}"
 
     def test_converges_to_steady_state(self, lat_sedan):
         """仿真终值应收敛到稳态理论值"""
         result = calc_steady_state_cornering(lat_sedan, 60, 3)
         history = simulate_step_steer(lat_sedan, 60, 3, duration_s=5)
-        _, _, _, final_r_deg, final_ay_g = history[-1]
+        final = history[-1]
         # 应在 5% 内收敛
-        assert final_r_deg == pytest.approx(result["yaw_rate_deg_s"], rel=0.05)
-        assert final_ay_g == pytest.approx(result["lateral_acc_g"], rel=0.05)
+        assert final["yaw_rate_deg"] == pytest.approx(result["yaw_rate_deg_s"], rel=0.05)
+        assert final["lateral_acc_g"] == pytest.approx(result["lateral_acc_g"], rel=0.05)
 
     def test_yaw_rate_starts_at_zero(self, lat_sedan):
         history = simulate_step_steer(lat_sedan, 60, 3, duration_s=1)
-        _, _, r0, _, _ = history[0]
-        assert r0 == 0
+        assert history[0]["yaw_rate_rad"] == 0
 
 
 # ---- 高层封装函数冒烟测试 ----
@@ -1022,17 +1023,17 @@ class TestStepSteerPacejka:
         history = simulate_step_steer(pacejka_car, 60, 3, duration_s=2,
                                        tire_model="pacejka")
         assert len(history) > 0
-        assert all(len(h) == 5 for h in history)
+        assert "yaw_rate_deg" in history[0]
 
     def test_pacejka_converges(self, pacejka_car):
         """Pacejka 模型应收敛到稳态附近"""
         history = simulate_step_steer(pacejka_car, 60, 3, duration_s=5,
                                        tire_model="pacejka")
-        _, _, _, final_r_deg, _ = history[-1]
+        final_r = history[-1]["yaw_rate_deg"]
         result = calc_steady_state_cornering(pacejka_car, 60, 3)
         # Pacejka 的稳态与线性不同，但应大致接近
-        assert final_r_deg > 0
-        assert final_r_deg == pytest.approx(result["yaw_rate_deg_s"], rel=0.25)
+        assert final_r > 0
+        assert final_r == pytest.approx(result["yaw_rate_deg_s"], rel=0.25)
 
     def test_pacejka_vs_linear_small_steer_close(self, pacejka_car):
         """小转角（1°）时 Pacejka ≈ 线性"""
@@ -1040,8 +1041,8 @@ class TestStepSteerPacejka:
                                      tire_model="linear")
         h_pac = simulate_step_steer(pacejka_car, 60, 1, duration_s=2,
                                      tire_model="pacejka")
-        _, _, _, r_lin, _ = h_lin[-1]
-        _, _, _, r_pac, _ = h_pac[-1]
+        r_lin = h_lin[-1]["yaw_rate_deg"]
+        r_pac = h_pac[-1]["yaw_rate_deg"]
         assert r_pac == pytest.approx(r_lin, rel=0.10)
 
     def test_pacejka_large_steer_different_from_linear(self, pacejka_car):
@@ -1050,8 +1051,8 @@ class TestStepSteerPacejka:
                                      tire_model="linear")
         h_pac = simulate_step_steer(pacejka_car, 60, 8, duration_s=2,
                                      tire_model="pacejka")
-        _, _, _, r_lin, _ = h_lin[-1]
-        _, _, _, r_pac, _ = h_pac[-1]
+        r_lin = h_lin[-1]["yaw_rate_deg"]
+        r_pac = h_pac[-1]["yaw_rate_deg"]
         # 大转角时轮胎饱和 → Pacejka 横摆角速度应小于线性预测
         assert r_pac < r_lin, (
             f"大转角饱和效应：Pacejka {r_pac:.2f} 应 < 线性 {r_lin:.2f}"

@@ -33,14 +33,23 @@ print("-" * 65)
 
 interval = 25  # 0.25s
 for i in range(0, len(h_lin), interval):
-    t, _, _, rl, ayl = h_lin[i]
-    _, _, _, rp, ayp = h_pac[i]
+    hl = h_lin[i]
+    hp = h_pac[i]
+    t = hl["time"]
+    rl = hl["yaw_rate_deg"]
+    rp = hp["yaw_rate_deg"]
+    ayl = hl["lateral_acc_g"]
+    ayp = hp["lateral_acc_g"]
     diff = (rp - rl) / rl * 100 if abs(rl) > 1e-6 else 0.0
     print(f"{t:6.2f}  {rl:9.3f}  {rp:9.3f}  {diff:+6.1f}%  {ayl:9.4f}  {ayp:9.4f}")
 
 # Final state
-_, _, _, rl_f, ayl_f = h_lin[-1]
-_, _, _, rp_f, ayp_f = h_pac[-1]
+hl_f = h_lin[-1]
+hp_f = h_pac[-1]
+rl_f = hl_f["yaw_rate_deg"]
+ayl_f = hl_f["lateral_acc_g"]
+rp_f = hp_f["yaw_rate_deg"]
+ayp_f = hp_f["lateral_acc_g"]
 print(f"\n=== 终态 (t=3.0s) ===")
 print(f"线性:   r={rl_f:.3f} deg/s, ay={ayl_f:.4f} g")
 print(f"Pacejka: r={rp_f:.3f} deg/s, ay={ayp_f:.4f} g")
@@ -49,8 +58,12 @@ print(f"delta:   Dr={rl_f-rp_f:.3f} deg/s ({(rl_f-rp_f)/rl_f*100:.1f}%)")
 # Large angle saturation test
 h_lin8 = simulate_step_steer(car, 80, 8, duration_s=2, tire_model="linear")
 h_pac8 = simulate_step_steer(car, 80, 8, duration_s=2, tire_model="pacejka")
-_, _, _, rl8, ayl8 = h_lin8[-1]
-_, _, _, rp8, ayp8 = h_pac8[-1]
+hl8 = h_lin8[-1]
+hp8 = h_pac8[-1]
+rl8 = hl8["yaw_rate_deg"]
+ayl8 = hl8["lateral_acc_g"]
+rp8 = hp8["yaw_rate_deg"]
+ayp8 = hp8["lateral_acc_g"]
 print(f"\n=== 大转角饱和效应 (80km/h, 8deg) ===")
 print(f"线性:   r={rl8:.3f} deg/s, ay={ayl8:.4f} g")
 print(f"Pacejka: r={rp8:.3f} deg/s, ay={ayp8:.4f} g")
