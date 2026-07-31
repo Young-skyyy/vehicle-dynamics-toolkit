@@ -322,49 +322,77 @@ class ECUDiagnosticServer:
 
 # ---- 诊断仪（模拟）----
 
-def diagnostic_session_demo(server: ECUDiagnosticServer):
-    """运行一个简短诊断会话示例，打印交互过程。"""
-    print(f"\n{'='*60}")
-    print(f"  UDS 诊断会话 — {server.ecu_name}")
-    print(f"{'='*60}")
+def run_diagnostic_session(server: ECUDiagnosticServer) -> list[dict]:
+    """执行一组典型 UDS 诊断步骤，返回结构化结果。
+
+    Args:
+        server: ECUDiagnosticServer 实例
+
+    Returns:
+        list of dict，每个步骤含:
+            {"label": str, "request_desc": str, "request": bytes,
+             "response": bytes, "parsed": dict | None}
+    """
+    steps = []
 
     # 1. Tester Present（default session，无需切换）
     req = bytes([UDSSID.TESTER_PRESENT])
     resp = server.handle_request(req)
-    print(f"  [0x3E] Tester Present          → {resp.hex()}")
+    steps.append({
+        "label": "TesterPresent",
+        "request_desc": "[0x3E] Tester Present",
+        "request": req,
+        "response": resp,
+        "parsed": None,
+    })
 
-    # 2. 切换到 Extended Session（访问更多服务）
+    # 2. 切换到 Extended Session
     req = bytes([UDSSID.DIAGNOSTIC_SESSION_CONTROL, 0x03])
     resp = server.handle_request(req)
-    print(f"  [0x10 03] Extended Session      → {resp.hex()}")
+    steps.append({
+        "label": "ExtSession",
+        "request_desc": "[0x10 03] Extended Session",
+        "request": req,
+        "response": resp,
+        "parsed": None,
+    })
 
     # 3. 读取 DID 0x000C（发动机转速）
     req = bytes([UDSSID.READ_DATA_BY_IDENTIFIER, 0x00, 0x0C])
     resp = server.handle_request(req)
-    if resp[0] == NEGATIVE_RESPONSE_SID:
-        print(f"  [0x22 000C] Read RPM            → NR: {resp.hex()}")
-    else:
-        did = (resp[1] << 8) | resp[2]
+    parsed = None
+    if resp[0] != NEGATIVE_RESPONSE_SID:
         val = int.from_bytes(resp[3:], "big")
-        print(f"  [0x22 000C] Read RPM            → DID={did:04X}, raw={val}")
+        parsed = {"did": 0x000C, "raw_value": val}
+    steps.append({
+        "label": "ReadRPM",
+        "request_desc": "[0x22 000C] Read RPM",
+        "request": req,
+        "response": resp,
+        "parsed": parsed,
+    })
 
     # 4. 读取 DID 0x000D（车速）
     req = bytes([UDSSID.READ_DATA_BY_IDENTIFIER, 0x00, 0x0D])
     resp = server.handle_request(req)
-    if resp[0] == NEGATIVE_RESPONSE_SID:
-        print(f"  [0x22 000D] Read Speed          → NR: {resp.hex()}")
-    else:
+    parsed = None
+    if resp[0] != NEGATIVE_RESPONSE_SID:
         val = int.from_bytes(resp[3:], "big")
-        print(f"  [0x22 000D] Read Speed          → raw={val} (={val*0.01:.0f} km/h)")
+        parsed = {"did": 0x000D, "raw_value": val, "value_kmh": round(val * 0.01)}
+    steps.append({
+        "label": "ReadSpeed",
+        "request_desc": "[0x22 000D] Read Speed",
+        "request": req,
+        "response": resp,
+        "parsed": parsed,
+    })
 
-    # 5. 读取 DTC（Request by Status Mask = 0xFF = all）
+    # 5. 读取 DTC（Status Mask = 0xFF = all）
     req = bytes([UDSSID.READ_DTC_INFORMATION, 0x02, 0xFF])
     resp = server.handle_request(req)
-    if resp[0] == NEGATIVE_RESPONSE_SID:
-        print(f"  [0x19 02] Read DTC              → NR: {resp.hex()}")
-    else:
-        print(f"  [0x19 02] Read DTC              → {len(resp[4:])} bytes response")
-        # 解析 DTC
+    parsed = None
+    if resp[0] != NEGATIVE_RESPONSE_SID:
+        dtcs = []
         offset = 4  # skip SID+0x40, sub-function, availability mask byte, mask
         while offset + 3 < len(resp):
             dtc_num = int.from_bytes(resp[offset:offset + 3], "big")
@@ -373,11 +401,84 @@ def diagnostic_session_demo(server: ECUDiagnosticServer):
             code = f"{code_prefix.get(dtc_num >> 12, 'P0')}{dtc_num & 0xFFF:03X}"
             desc = DTC_DATABASE.get(code, {}).get("desc", "Unknown")
             status_bits = decode_dtc_status(status)
-            status_str = "confirmed" if status_bits["confirmedDTC"] else "pending"
-            print(f"    {code} | {desc} | {status_str} (0x{status:02X})")
+            dtcs.append({
+                "code": code, "desc": desc,
+                "status_byte": status, "status_decoded": status_bits,
+            })
             offset += 4
+        parsed = {"dtc_count": len(dtcs), "dtcs": dtcs}
+    steps.append({
+        "label": "ReadDTC",
+        "request_desc": "[0x19 02] Read DTC",
+        "request": req,
+        "response": resp,
+        "parsed": parsed,
+    })
 
     # 6. 回到 Default Session
     req = bytes([UDSSID.DIAGNOSTIC_SESSION_CONTROL, 0x01])
     resp = server.handle_request(req)
-    print(f"  [0x10 01] Default Session        → {resp.hex()}")
+    steps.append({
+        "label": "DefaultSession",
+        "request_desc": "[0x10 01] Default Session",
+        "request": req,
+        "response": resp,
+        "parsed": None,
+    })
+
+    return steps
+
+
+def print_diagnostic_session(steps: list[dict], server: ECUDiagnosticServer):
+    """格式化打印诊断会话步骤结果。
+
+    Args:
+        steps: run_diagnostic_session() 返回的步骤列表
+        server: 对应的 ECUDiagnosticServer 实例
+    """
+    print(f"\n{'='*60}")
+    print(f"  UDS 诊断会话 — {server.ecu_name}")
+    print(f"{'='*60}")
+
+    for step in steps:
+        req_desc = step["request_desc"]
+        resp = step["response"]
+
+        if resp[0] == NEGATIVE_RESPONSE_SID:
+            print(f"  {req_desc:<28} → NR: {resp.hex()}")
+            continue
+
+        label = step["label"]
+        if label == "TesterPresent":
+            print(f"  {req_desc:<28} → {resp.hex()}")
+
+        elif label == "ExtSession":
+            print(f"  {req_desc:<28} → {resp.hex()}")
+
+        elif label == "ReadRPM" and step["parsed"]:
+            p = step["parsed"]
+            print(f"  {req_desc:<28} → DID={p['did']:04X}, raw={p['raw_value']}")
+
+        elif label == "ReadSpeed" and step["parsed"]:
+            p = step["parsed"]
+            print(f"  {req_desc:<28} → raw={p['raw_value']} (={p['value_kmh']:.0f} km/h)")
+
+        elif label == "ReadDTC" and step["parsed"]:
+            p = step["parsed"]
+            print(f"  {req_desc:<28} → {p['dtc_count']} DTCs")
+            for dtc in p["dtcs"]:
+                s = dtc["status_decoded"]
+                status_str = "confirmed" if s["confirmedDTC"] else "pending"
+                print(f"    {dtc['code']} | {dtc['desc']} | {status_str} (0x{dtc['status_byte']:02X})")
+
+        elif label == "DefaultSession":
+            print(f"  {req_desc:<28} → {resp.hex()}")
+
+        else:
+            print(f"  {req_desc:<28} → {resp.hex()}")
+
+
+def diagnostic_session_demo(server: ECUDiagnosticServer):
+    """运行并打印诊断会话（向后兼容包装）。"""
+    steps = run_diagnostic_session(server)
+    print_diagnostic_session(steps, server)

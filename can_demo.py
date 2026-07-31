@@ -9,6 +9,8 @@ import time
 import random
 import struct
 
+from uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
+
 
 # 1. CAN 帧定义
 
@@ -334,15 +336,7 @@ def simulate_can_bus(duration_s: float = 5) -> dict:
 
 
 # 6. DTC 故障码仿真
-
-DTC_DATABASE = {
-    "P0301": {"desc": "1缸失火检测", "ecu": "EMS"},
-    "P0420": {"desc": "催化转化器效率低于阈值", "ecu": "EMS"},
-    "U0100": {"desc": "与 ECM/PCM 失去通讯", "ecu": "CAN"},
-    "C0035": {"desc": "左前轮速传感器电路故障", "ecu": "ABS"},
-    "B1A00": {"desc": "环境光传感器故障", "ecu": "BCM"},
-    "P0A7F": {"desc": "电池组劣化", "ecu": "BMS"},
-}
+# DTC_DATABASE 从 uds.py 统一导入（单一数据源）
 
 
 def simulate_dtc_check(seed: int | None = 42) -> dict:
@@ -550,11 +544,11 @@ if __name__ == "__main__":
             print(f"    {d['code']} | {d['ecu']} | {d['desc']}")
 
     # 场景 3：UDS 诊断会话演示
-    from uds import ECUDiagnosticServer, diagnostic_session_demo
     ems_server = ECUDiagnosticServer("EMS", {
         0x000C: 2500.0,   # 发动机转速
         0x000D: 60.0,     # 车速
         0x0005: 90.0,     # 冷却液温度
         0x0011: 35.0,     # 节气门位置
     })
-    diagnostic_session_demo(ems_server)
+    steps = run_diagnostic_session(ems_server)
+    print_diagnostic_session(steps, ems_server)
