@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 
-from _constants import G, RHO_AIR, KMH_TO_MS, MS_TO_KMH, DEFAULT_ROLLING_COEFF
+from _constants import G, RHO_AIR, KMH_TO_MS, MS_TO_KMH, DEFAULT_ROLLING_COEFF, DEFAULT_CG_FRONT_RATIO
 
 
 # ---- 发动机外特性扭矩曲线 ----
@@ -29,9 +29,9 @@ def _make_default_torque_curve(max_torque_nm: float, idle_rpm: float = 800,
             curve[rpm] = round(ratio * max_torque_nm, 1)
     # 确保怠速和红线在曲线里
     if idle_rpm not in curve:
-        curve[idle_rpm] = round(0.30 * max_torque_nm, 1)
+        curve[int(idle_rpm)] = round(0.30 * max_torque_nm, 1)
     if max_rpm not in curve:
-        curve[max_rpm] = round(0.67 * max_torque_nm, 1)
+        curve[int(max_rpm)] = round(0.67 * max_torque_nm, 1)
     return dict(sorted(curve.items()))
 
 
@@ -122,7 +122,7 @@ class Vehicle:
         )
         # 横向动力学参数
         self.wheelbase: float = wheelbase_m or 2.65          # 轴距（m），典型轿车
-        self.cg_to_front: float = cg_to_front_m or self.wheelbase * 0.45  # 质心到前轴距离（m）
+        self.cg_to_front: float = cg_to_front_m or self.wheelbase * DEFAULT_CG_FRONT_RATIO  # 质心到前轴距离（m）
         self.cg_to_rear: float = self.wheelbase - self.cg_to_front         # 质心到后轴距离（m）
         # 侧偏刚度 magnitude（N/rad），存储正值。侧向力公式 Fy = -Cα × α，负号在 calc_cornering_forces 中体现
         self.cornering_stiffness_f: float = cornering_stiffness_f or 80000

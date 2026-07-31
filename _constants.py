@@ -21,3 +21,6 @@ SECONDS_PER_HOUR = 3600
 
 # 每分钟的秒数
 SECONDS_PER_MINUTE = 60
+
+# 默认质心到前轴距离占轴距的比例（45%，典型前置前驱轿车）
+DEFAULT_CG_FRONT_RATIO = 0.45

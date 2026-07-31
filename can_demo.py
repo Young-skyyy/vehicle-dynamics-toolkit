@@ -307,7 +307,7 @@ def simulate_can_bus(duration_s: float = 5) -> dict:
     dt = 0.01  # 10ms 主循环步长
     total_steps = int(duration_s / dt)
 
-    timers = {name: 0 for name in CAN_MESSAGES}
+    timers = {name: 0.0 for name in CAN_MESSAGES}
     msg_count = 0
     frames = []
 
@@ -317,8 +317,8 @@ def simulate_can_bus(duration_s: float = 5) -> dict:
 
         for name, msg_def in CAN_MESSAGES.items():
             timers[name] += dt * 1000  # 累计毫秒
-            if timers[name] >= msg_def["cycle_ms"]:
-                timers[name] -= msg_def["cycle_ms"]
+            if timers[name] >= msg_def["cycle_ms"]:  # type: ignore[operator]
+                timers[name] -= msg_def["cycle_ms"]  # type: ignore[operator]
                 frame_data = generate_frame(name, msg_def, veh, sim_time)
                 parsed = parse_can_frame(frame_data, msg_def)
                 frames.append({
@@ -393,7 +393,7 @@ def generate_dbc(filepath: str = "simulated_ecu.dbc", baudrate: int = 500000) ->
         transmitter = _MSG_TO_ECU.get(msg_name, "ECU")
         lines.append(f"\nBO_ {can_id} {msg_name}: {dlc} {transmitter}")
 
-        for sig in msg_def["signals"]:
+        for sig in msg_def["signals"]:  # type: ignore[attr-defined]
             sig_name = sig["name"].replace(" ", "_")
             start = sig["start"]
             length = sig["len"]
@@ -441,7 +441,7 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
     veh = VehicleECU()
     dt = 0.01
     total_steps = int(duration_s / dt)
-    timers = {name: 0 for name in CAN_MESSAGES}
+    timers = {name: 0.0 for name in CAN_MESSAGES}
 
     total_bits = 0
     total_frames = 0
@@ -465,8 +465,8 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
 
         for name, msg_def in CAN_MESSAGES.items():
             timers[name] += dt * 1000
-            if timers[name] >= msg_def["cycle_ms"]:
-                timers[name] -= msg_def["cycle_ms"]
+            if timers[name] >= msg_def["cycle_ms"]:  # type: ignore[operator]
+                timers[name] -= msg_def["cycle_ms"]  # type: ignore[operator]
 
                 # 错误帧注入（使用 ECU 的 RNG，保证可复现）
                 is_error = veh._rng.random() < error_rate

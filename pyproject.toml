@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vehicle-dynamics-toolkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "车辆动力学工程工具包：SAE J2263 滚动阻力 · BSFC 万有特性 · WLTC 瞬态油耗 · 2-DOF 自行车模型 · CAN 总线仿真"
 readme = "README.md"
 license = {text = "MIT"}

@@ -198,8 +198,8 @@ def display_step_steer_response(data, vehicle_name, vx_kmh, steer_deg):
     print(f"{'时间(s)':>8}  {'vy(m/s)':>10}  {'r(deg/s)':>10}  {'ay(g)':>8}")
     print("-" * 50)
     for i in range(0, len(history), 100):  # dt=0.01, 每100步 = 1秒
-        t, vy, _, r_deg, ay_g = history[i]
-        print(f"{t:8.1f}  {vy:10.3f}  {r_deg:10.2f}  {ay_g:8.3f}")
+        h = history[i]
+        print(f"{h['time']:8.1f}  {h['vy']:10.3f}  {h['yaw_rate_deg']:10.2f}  {h['lateral_acc_g']:8.3f}")
     print(f"\n  稳态理论值:  r={data['steady_yaw_rate']:.2f} deg/s,  "
           f"ay={data['steady_lateral_acc']:.3f} g")
     print(f"  仿真终值:    r={data['final_yaw_rate']:.2f} deg/s,  "

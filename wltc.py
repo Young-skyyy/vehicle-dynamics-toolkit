@@ -136,7 +136,7 @@ def get_wltc_summary() -> dict:
         ("Phase 4 (Extra High)",  1478, 1800),
     ]
     phase_list = []
-    total_dist = 0
+    total_dist: float = 0.0
     for name, start, end in phases:
         seg = profile[start:end + 1]
         max_v = max(seg)
@@ -254,12 +254,12 @@ def simulate_transient_cycle(vehicle: Vehicle, cycle: list | None = None,
             if speed > 0.1:
                 inst_l100 = fuel_vol_rate * (SECONDS_PER_HOUR * 100 / (speed * MS_TO_KMH))
             else:
-                inst_l100 = 0
+                inst_l100 = 0.0
         else:
             # 减速断油 (DFCO)：收油门且转速高于怠速 → 断油
             if engine_rpm > vehicle.idle_rpm + 300 and throttle < 0.01 and speed > 1:
-                bsfc = 0
-                inst_l100 = 0
+                bsfc = 0.0
+                inst_l100 = 0.0
             else:
                 # 怠速油耗
                 bsfc = _interpolate_bsfc(vehicle.idle_rpm, 0.05, vehicle.fuel_type)
@@ -283,7 +283,7 @@ def simulate_transient_cycle(vehicle: Vehicle, cycle: list | None = None,
             last_print = sim_time
 
     # 稳态估算：按每个阶段车速巡航的油耗求和
-    steady_total = 0
+    steady_total: float = 0.0
     for phase_name, duration, target_kmh in cycle:
         if target_kmh > 0:
             seg_dist = target_kmh * KMH_TO_MS * duration / 1000  # km
@@ -343,7 +343,7 @@ def simulate_wltc(vehicle: Vehicle, dt: float = 0.2,
               f"{'rpm':>6}  {'g/kWh':>5}  {'L/100km':>8}  {'L':>7}")
         print("-" * 100)
 
-    last_print = -print_interval
+    last_print = -float(print_interval)
     throttle = 0.0
     brake = 0.0
     last_accel = 0.0
@@ -387,8 +387,8 @@ def simulate_wltc(vehicle: Vehicle, dt: float = 0.2,
         distance += speed * dt
 
         # ---- 瞬态油耗 ----
-        inst_l100 = 0
-        bsfc = 0
+        inst_l100 = 0.0
+        bsfc = 0.0
         if gear > 0 and throttle > 0.01:
             load_ratio = min(1.0, engine_torque / vehicle.max_torque)
             bsfc = _interpolate_bsfc(engine_rpm, max(0.01, load_ratio), vehicle.fuel_type)
@@ -401,6 +401,7 @@ def simulate_wltc(vehicle: Vehicle, dt: float = 0.2,
                 inst_l100 = fuel_rate * (SECONDS_PER_HOUR * 100 / (speed * MS_TO_KMH))
 
             # 工况分类统计
+            speed_error = target_speed - speed
             if acceleration > 0.2:
                 accel_fuel += fuel_rate * dt
             elif abs(speed_error) < 0.3:
@@ -409,7 +410,7 @@ def simulate_wltc(vehicle: Vehicle, dt: float = 0.2,
                 decel_fuel += fuel_rate * dt  # 轻微减速但仍在供油
         else:
             if engine_rpm > vehicle.idle_rpm + 300 and throttle < 0.01 and speed > 1:
-                bsfc = 0
+                bsfc = 0.0
                 fuel_rate = 0.0
             else:
                 bsfc = _interpolate_bsfc(vehicle.idle_rpm, 0.05, vehicle.fuel_type)
@@ -445,7 +446,7 @@ def simulate_wltc(vehicle: Vehicle, dt: float = 0.2,
             last_print = sim_time
 
     # ---- 稳态估算（不经过 round，避免微距截断）----
-    steady_total = 0
+    steady_total: float = 0.0
     for t in range(0, _WLTC_DURATION):
         v = wltc[t] if t < len(wltc) else 0
         if v > 0.5:

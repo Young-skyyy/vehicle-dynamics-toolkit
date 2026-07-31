@@ -99,7 +99,7 @@ DTC_DATABASE = {
 
 # ---- Standard DIDs（常用数据标识符）----
 
-_STANDARD_DIDS = {
+_STANDARD_DIDS: dict[int, dict[str, object]] = {
     0x000C: {"name": "发动机转速",   "len": 2, "unit": "rpm"},
     0x000D: {"name": "车速",        "len": 2, "unit": "km/h",  "scale": 0.01},
     0x0005: {"name": "冷却液温度",   "len": 1, "unit": "degC",  "offset": -40},
@@ -236,10 +236,10 @@ class ECUDiagnosticServer:
         info = _STANDARD_DIDS.get(did, {"name": f"DID_{did:04X}", "len": 2, "unit": ""})
         raw_val = self.did_values[did]
         # 编码物理值 → 原始值
-        scale = info.get("scale", 1)
-        offset = info.get("offset", 0)
+        scale = float(info.get("scale", 1))       # type: ignore[arg-type]
+        offset = float(info.get("offset", 0))      # type: ignore[arg-type]
         raw = int((raw_val - offset) / scale)
-        length = info["len"]
+        length = int(info["len"])                   # type: ignore[arg-type, call-overload]
         return bytes([UDSSID.READ_DATA_BY_IDENTIFIER + POSITIVE_RESPONSE_OFFSET,
                       request[1], request[2]]) + raw.to_bytes(length, "big")
 
@@ -254,8 +254,8 @@ class ECUDiagnosticServer:
             mask = request[2] if len(request) >= 3 else 0xFF
             matched: list[tuple[str, int]] = []
             for code, dtc in DTC_DATABASE.items():
-                if dtc["ecu"] == self.ecu_name and (dtc["status"] & mask):
-                    matched.append((code, dtc["status"]))
+                if dtc["ecu"] == self.ecu_name and (int(dtc["status"]) & mask):  # type: ignore[arg-type, call-overload]
+                    matched.append((code, int(dtc["status"])))  # type: ignore[arg-type, call-overload]
             # DTC Availability Mask + DTCs
             response = bytes([UDSSID.READ_DTC_INFORMATION + POSITIVE_RESPONSE_OFFSET, 0x02])
             response += (1).to_bytes(1, "big")  # DTC Availability Mask (1 byte)
@@ -322,7 +322,7 @@ class ECUDiagnosticServer:
 
 # ---- 诊断仪（模拟）----
 
-def run_diagnostic_session(server: ECUDiagnosticServer) -> list[dict]:
+def run_diagnostic_session(server: ECUDiagnosticServer) -> list[dict[str, object]]:
     """执行一组典型 UDS 诊断步骤，返回结构化结果。
 
     Args:
@@ -369,7 +369,7 @@ def run_diagnostic_session(server: ECUDiagnosticServer) -> list[dict]:
         "request_desc": "[0x22 000C] Read RPM",
         "request": req,
         "response": resp,
-        "parsed": parsed,
+        "parsed": parsed,  # type: ignore[dict-item]
     })
 
     # 4. 读取 DID 0x000D（车速）
@@ -384,7 +384,7 @@ def run_diagnostic_session(server: ECUDiagnosticServer) -> list[dict]:
         "request_desc": "[0x22 000D] Read Speed",
         "request": req,
         "response": resp,
-        "parsed": parsed,
+        "parsed": parsed,  # type: ignore[dict-item]
     })
 
     # 5. 读取 DTC（Status Mask = 0xFF = all）
@@ -406,13 +406,13 @@ def run_diagnostic_session(server: ECUDiagnosticServer) -> list[dict]:
                 "status_byte": status, "status_decoded": status_bits,
             })
             offset += 4
-        parsed = {"dtc_count": len(dtcs), "dtcs": dtcs}
+        parsed = {"dtc_count": len(dtcs), "dtcs": dtcs}  # type: ignore[dict-item]
     steps.append({
         "label": "ReadDTC",
         "request_desc": "[0x19 02] Read DTC",
         "request": req,
         "response": resp,
-        "parsed": parsed,
+        "parsed": parsed,  # type: ignore[dict-item]
     })
 
     # 6. 回到 Default Session
@@ -426,7 +426,7 @@ def run_diagnostic_session(server: ECUDiagnosticServer) -> list[dict]:
         "parsed": None,
     })
 
-    return steps
+    return steps  # type: ignore[return-value]
 
 
 def print_diagnostic_session(steps: list[dict], server: ECUDiagnosticServer):
