@@ -3,6 +3,7 @@
 [![pytest](https://github.com/Young-skyyy/vehicle-dynamics-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/Young-skyyy/vehicle-dynamics-toolkit/actions/workflows/test.yml)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Star](https://img.shields.io/github/stars/Young-skyyy/vehicle-dynamics-toolkit?style=social)](https://github.com/Young-skyyy/vehicle-dynamics-toolkit)
 
 *A pure-Python vehicle dynamics simulation toolkit — no MATLAB/Simulink required.*
 
