@@ -18,21 +18,21 @@ I built this while learning vehicle dynamics. Every textbook formula — SAE J22
 
 If you're a student preparing for an automotive software testing interview, or learning CAN/UDS protocols, you'll find working reference implementations here.
 
-### 面试高频问题 → 本项目如何回答
+### 工程问题 → 本项目的处理方式
 
-车辆软件测试面试中，面试官不会只问你"会不会 Python"，而是追问你对物理模型的理解深度。以下每一个问题，本项目都有可运行的代码作为答案：
+教科书公式在代码里往往比想象中复杂——SAE 标准、Pacejka 模型、CAN 协议，都是"公式写在纸上三行，代码要写三百行"的典型。下表记录了过程中踩过的坑和最终落地方式：
 
-| 面试官可能问 | 本项目的实现 | 对应文件 |
+| 工程问题 | 本项目的处理方式 | 代码位置 |
 |---|---|---|
-| "SAE J2263 滚动阻力模型和恒定系数有什么区别？为什么用 f₄v⁴ 项？" | 动态滚动阻力 μ(v)=f₀+f₁v+f₄v⁴，4 阶多项式捕捉高速非线性增长，并有 8 条 pytest 用例验证不同速度下的阻力值 | `vehicle.py` → `rolling_coeff_dynamic()` |
-| "Pacejka 魔术公式各参数 B/C/D/E 的物理含义？和线性轮胎模型差在哪？" | 完整实现 Fy=D·sin(C·arctan(Bα−E(Bα−arctan(Bα))))，并有 `test_pacejka_vs_linear` 对比两种模型在大侧偏角下的分歧 | `lateral_dynamics.py` → `calc_pacejka_lateral_force()` |
-| "BSFC 万有特性图怎么看？怎么查某个工况点的油耗？" | 15×12 双线性插值网格（180 个数据点），含等功率线叠加，dashboard 可直观看出最低油耗区 | `bsfc.py` → `_interpolate_bsfc()` |
-| "WLTC 循环中 DFCO 断油和 enrichment 加浓怎么判断？" | 瞬态仿真逐秒判断：减速且转速高于断油阈值→DFCO（fuel=0），大负荷且转速高于加浓阈值→功率加浓（×1.15） | `wltc.py` → `get_wltc_profile()` |
-| "CAN 总线 Motorola 和 Intel 字节序的区别？怎么验证编码正确？" | 两种字节序均实现，42 条 pytest 做 encode→decode 往返验证（`assert original == decoded`） | `can_demo.py` |
-| "UDS 0x27 SecurityAccess 的 Seed & Key 流程？DTC Status Byte 各位含义？" | 完整状态机实现：会话切换→请求种子→计算密钥→解锁，DTC 状态字节 bit0~bit7 逐位注释 | `uds.py` |
-| "不足转向梯度 Kus 怎么算？怎么判断一辆车转向不足还是过度？" | Kus = Wf/Cf − Wr/Cr，正值为不足转向，附特征车速/临界车速计算公式，稳态回转表输出 | `lateral_dynamics.py` → `calc_understeer_gradient()` |
-| "IDM 跟车模型的时间间隔 T 增大 0.5s 会怎样？" | 参数化 IDM：T/s₀/b 可调，`car_following_simulation()` 可对比不同参数下的跟车距离曲线 | `vehicle.py` → `idm_acceleration()` |
-| "这个函数的边界条件你测了吗？" | **209 条 pytest**，覆盖扭矩插值边界、BSFC 网格外推、CAN 非法 DLC、UDS 负响应码、IDM 收敛、Pacejka vs 线性对比 | 3 个 test_*.py |
+| 滚动阻力不能简单地用常数系数 | SAE J2263 动态模型 μ(v)=f₀+f₁v+f₄v⁴，4 阶项捕捉 120 km/h 以上非线性增长，8 条 pytest 验证速度-阻力对应关系 | `vehicle.py` → `rolling_coeff_dynamic()` |
+| 线性轮胎模型在大侧偏角下偏离真实曲线 | 同时实现线性模型和 Pacejka 魔术公式 Fy=D·sin(C·arctan(Bα−E(Bα−arctan(Bα))))，`test_pacejka_vs_linear` 量化两种模型的偏差 | `lateral_dynamics.py` → `calc_pacejka_lateral_force()` |
+| BSFC 数据是离散网格点，任意工况需要插值 | 15×12 双线性插值（180 个数据点），叠加等功率线，dashboard 可定位最低油耗区 | `bsfc.py` → `_interpolate_bsfc()` |
+| WLTC 瞬态仿真中减速≠零油耗 | 逐秒判断工况：减速+转速>断油阈值→DFCO 断油（fuel=0），大负荷+转速>加浓阈值→功率加浓（×1.15） | `wltc.py` → `get_wltc_profile()` |
+| CAN 帧编码在 Motorola 和 Intel 字节序下结果不同 | 两种字节序均实现，42 条 pytest 做 encode→decode 往返验证：`assert original == decoded` | `can_demo.py` |
+| UDS SecurityAccess 是带状态的多步交互，不是单次请求 | 完整状态机：默认会话→0x10 扩展会话→0x27 请求种子→计算密钥→解锁；DTC Status Byte 逐位注释 | `uds.py` |
+| 不足转向梯度正负号容易混淆 | Kus = Wf/Cf − Wr/Cr，Kus>0 不足转向（民用车常态），附特征车速/临界车速公式，稳态回转表可直接输出 | `lateral_dynamics.py` → `calc_understeer_gradient()` |
+| IDM 跟车模型参数对行为的影响不是线性的 | T/s₀/b 全部参数化暴露，`car_following_simulation()` 可一键对比不同参数组合下的跟车距离曲线 | `vehicle.py` → `idm_acceleration()` |
+| 物理模型容易写出"看起来对但边界爆炸"的代码 | **209 条 pytest** 覆盖：扭矩插值边界、BSFC 网格外推、CAN 非法 DLC、UDS 负响应码、IDM 收敛、Pacejka vs 线性对比 | 3 个 test_*.py |
 
 ---
 
