@@ -32,7 +32,7 @@ If you're a student preparing for an automotive software testing interview, or l
 | UDS SecurityAccess 是带状态的多步交互，不是单次请求 | 完整状态机：默认会话→0x10 扩展会话→0x27 请求种子→计算密钥→解锁；DTC Status Byte 逐位注释 | `uds.py` |
 | 不足转向梯度正负号容易混淆 | Kus = Wf/Cf − Wr/Cr，Kus>0 不足转向（民用车常态），附特征车速/临界车速公式，稳态回转表可直接输出 | `lateral_dynamics.py` → `calc_understeer_gradient()` |
 | IDM 跟车模型参数对行为的影响不是线性的 | T/s₀/b 全部参数化暴露，`car_following_simulation()` 可一键对比不同参数组合下的跟车距离曲线 | `vehicle.py` → `idm_acceleration()` |
-| 物理模型容易写出"看起来对但边界爆炸"的代码 | **209 条 pytest** 覆盖：扭矩插值边界、BSFC 网格外推、CAN 非法 DLC、UDS 负响应码、IDM 收敛、Pacejka vs 线性对比 | 3 个 test_*.py |
+| 物理模型容易写出"看起来对但边界爆炸"的代码 | **237 条 pytest** 覆盖：扭矩插值边界、BSFC 网格外推、CAN 负载率计算、UDS 负响应码、IDM 收敛、Pacejka vs 线性对比 | 4 个 test_*.py |
 
 ---
 
@@ -68,10 +68,10 @@ python plot_dashboard.py          # 5-in-1 dashboard (generates dashboard.png)
 
 ## Tests
 
-**209 pytest cases**, CI-enabled via GitHub Actions:
+**237 pytest cases**, CI-enabled via GitHub Actions:
 
 ```bash
-python -m pytest test_vehicle_dynamics.py test_can_demo.py test_uds.py -v
+python -m pytest test_vehicle_dynamics.py test_can_demo.py test_uds.py test_can_bus_load.py -v
 ```
 
 Covers: torque curve interpolation, BSFC bilinear interpolation, CAN encode/decode roundtrip (Motorola & Intel), UDS positive/negative responses, IDM convergence, Pacejka vs. linear tire model comparison.
