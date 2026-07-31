@@ -10,7 +10,12 @@ rl_env/
 *.asc
 *.dbc
 *.png
+!dashboard.png
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+.pytest_cache/
+.ruff_cache/
+*.coverage
+htmlcov/

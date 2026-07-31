@@ -47,6 +47,8 @@ python can_demo.py                # CAN bus + UDS diagnostics
 python plot_dashboard.py          # 5-in-1 dashboard (generates dashboard.png)
 ```
 
+> **Note:** The demo scripts use hardcoded vehicle/condition parameters for quick out-of-the-box runs. To switch vehicles (e.g. sedan → SUV) or adjust speed/grade, edit the call arguments at the bottom of `vehicle_dynamics.py`. A CLI wrapper is planned but not yet needed for the current scope.
+
 ---
 
 ## What's Inside
@@ -56,7 +58,7 @@ python plot_dashboard.py          # 5-in-1 dashboard (generates dashboard.png)
 | **Longitudinal Dynamics** | Engine torque curve → gear ratios → wheel force (replaces simplified P=Fv) |
 | **Acceleration** | 0–100 km/h WOT simulation, 5-speed automatic shifting (92% redline upshift) |
 | **Resistance** | SAE J2263 dynamic rolling resistance: μ(v)=f₀+f₁v+f₄v⁴ |
-| **Fuel Consumption** | BSFC map bilinear interpolation (180 data points) + WLTC Class 3 transient (DFCO fuel-cut + enrichment) |
+| **Fuel Consumption** | BSFC map bilinear interpolation (180 data points, indicative — <i>not</i> calibration-grade) + WLTC Class 3 transient (DFCO fuel-cut + enrichment) |
 | **Lateral Dynamics** | 2-DOF bicycle model / slip angles / understeer gradient / Pacejka Magic Formula |
 | **IDM Car-Following** | Time headway T, minimum gap s₀, comfortable deceleration b — parameterized |
 | **CAN Bus** | 5 ECUs (EMS/BMS/ABS/TCU/BCM), Motorola & Intel byte order, DBC export, bus load monitoring, error injection |
@@ -92,19 +94,24 @@ Covers: torque curve interpolation, BSFC bilinear interpolation, CAN encode/deco
 ## Project Structure
 
 ```
-├── vehicle.py              # Vehicle physics & powertrain
-├── lateral_dynamics.py     # Lateral dynamics (bicycle model + Pacejka)
-├── bsfc.py                 # BSFC fuel map + bilinear interpolation
-├── wltc.py                 # WLTC Class 3 transient fuel simulation
-├── can_demo.py             # CAN bus simulation + DBC generation
-├── uds.py                  # UDS diagnostic protocol stack
-├── plot_dashboard.py       # 5-in-1 dashboard
-├── plotting.py             # BSFC contour heatmap
-├── test_vehicle_dynamics.py  # 139 unit tests
-├── test_can_demo.py        # 42 CAN tests
-├── test_uds.py              # 28 UDS tests
-├── _constants.py            # Physical constants
-└── requirements.txt
+├── vehicle.py                 # Vehicle physics & powertrain
+├── lateral_dynamics.py        # Lateral dynamics (bicycle model + Pacejka)
+├── bsfc.py                    # BSFC fuel map + bilinear interpolation
+├── wltc.py                    # WLTC Class 3 transient fuel simulation
+├── can_demo.py                # CAN bus simulation + DBC generation
+├── uds.py                     # UDS diagnostic protocol stack
+├── vehicle_dynamics.py        # Main demo entry (longitudinal + lateral)
+├── plot_dashboard.py          # 5-in-1 dashboard (BSFC + cornering + turning + step steer + ACC)
+├── plotting.py                # BSFC contour heatmap
+├── run_pacejka_demo.py        # Pacejka vs. linear tire model side-by-side comparison
+├── _constants.py              # Physical constants (G, RHO_AIR, etc.)
+├── _plot_utils.py             # Cross-platform Chinese font detection for matplotlib
+├── test_vehicle_dynamics.py   # 139 unit tests
+├── test_can_demo.py           # 42 CAN tests
+├── test_uds.py                # 28 UDS tests
+├── requirements.txt
+├── .pre-commit-config.yaml    # Pre-commit hooks (ruff, whitespace, YAML/TOML validation)
+└── pyproject.toml
 ```
 
 ---
