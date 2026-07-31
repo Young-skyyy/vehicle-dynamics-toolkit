@@ -167,28 +167,62 @@ class Vehicle:
         return f"{self.name} ({self.mass}kg, {self.power/1000:.0f}kW)"
 
 
-# 定义三辆车做对比（含动力总成参数）
-car_sedan: Vehicle = Vehicle("普通轿车", 1500, 100, drag_coeff=0.28,
-                    max_torque_nm=180, idle_rpm=800, max_rpm=6200,
-                    gear_ratios=[3.55, 2.11, 1.42, 1.00, 0.78],
-                    final_drive=4.06, wheel_radius_m=0.32, trans_efficiency=0.90,
-                    fuel_density_gl=740, fuel_type="gasoline",
-                    wheelbase_m=2.65, cg_to_front_m=1.2,
-                    cornering_stiffness_f=80000, cornering_stiffness_r=70000)
-car_suv: Vehicle = Vehicle("SUV", 2000, 140, drag_coeff=0.35, frontal_area_m2=2.7,
-                  max_torque_nm=250, idle_rpm=700, max_rpm=6000,
-                  gear_ratios=[3.83, 2.36, 1.55, 1.00, 0.79],
-                  final_drive=3.89, wheel_radius_m=0.36, trans_efficiency=0.88,
-                  fuel_density_gl=740, fuel_type="gasoline",
-                  wheelbase_m=2.75, cg_to_front_m=1.3,
-                  cornering_stiffness_f=90000, cornering_stiffness_r=75000)
-car_truck: Vehicle = Vehicle("重型卡车", 15000, 300, drag_coeff=0.65, frontal_area_m2=7.0,
-                    max_torque_nm=1000, idle_rpm=600, max_rpm=4000,
-                    gear_ratios=[5.50, 3.20, 1.90, 1.00, 0.73],
-                    final_drive=4.30, wheel_radius_m=0.52, trans_efficiency=0.85,
-                    fuel_density_gl=840, fuel_type="diesel",
-                    wheelbase_m=5.0, cg_to_front_m=2.5,
-                    cornering_stiffness_f=200000, cornering_stiffness_r=180000)
+# 三辆预置车辆的懒加载缓存（避免 import 时的参数计算开销）
+_VEHICLE_CACHE: dict[str, Vehicle] = {}
+
+
+def _init_default_vehicles():
+    """首次访问时创建三辆预置 Vehicle 实例。"""
+    global _VEHICLE_CACHE
+    _VEHICLE_CACHE["car_sedan"] = Vehicle(
+        "普通轿车", 1500, 100, drag_coeff=0.28,
+        max_torque_nm=180, idle_rpm=800, max_rpm=6200,
+        gear_ratios=[3.55, 2.11, 1.42, 1.00, 0.78],
+        final_drive=4.06, wheel_radius_m=0.32, trans_efficiency=0.90,
+        fuel_density_gl=740, fuel_type="gasoline",
+        wheelbase_m=2.65, cg_to_front_m=1.2,
+        cornering_stiffness_f=80000, cornering_stiffness_r=70000,
+    )
+    _VEHICLE_CACHE["car_suv"] = Vehicle(
+        "SUV", 2000, 140, drag_coeff=0.35, frontal_area_m2=2.7,
+        max_torque_nm=250, idle_rpm=700, max_rpm=6000,
+        gear_ratios=[3.83, 2.36, 1.55, 1.00, 0.79],
+        final_drive=3.89, wheel_radius_m=0.36, trans_efficiency=0.88,
+        fuel_density_gl=740, fuel_type="gasoline",
+        wheelbase_m=2.75, cg_to_front_m=1.3,
+        cornering_stiffness_f=90000, cornering_stiffness_r=75000,
+    )
+    _VEHICLE_CACHE["car_truck"] = Vehicle(
+        "重型卡车", 15000, 300, drag_coeff=0.65, frontal_area_m2=7.0,
+        max_torque_nm=1000, idle_rpm=600, max_rpm=4000,
+        gear_ratios=[5.50, 3.20, 1.90, 1.00, 0.73],
+        final_drive=4.30, wheel_radius_m=0.52, trans_efficiency=0.85,
+        fuel_density_gl=840, fuel_type="diesel",
+        wheelbase_m=5.0, cg_to_front_m=2.5,
+        cornering_stiffness_f=200000, cornering_stiffness_r=180000,
+    )
+
+
+def get_default_vehicles() -> dict[str, Vehicle]:
+    """返回三辆预置车辆 dict，首次调用时创建。"""
+    if not _VEHICLE_CACHE:
+        _init_default_vehicles()
+    return dict(_VEHICLE_CACHE)
+
+
+# 模块级类型声明（供 IDE/类型检查器识别），运行时通过 __getattr__ 懒加载
+car_sedan: Vehicle
+car_suv: Vehicle
+car_truck: Vehicle
+
+
+def __getattr__(name: str):
+    """模块级懒加载：首次访问 car_sedan/car_suv/car_truck 时才创建实例。"""
+    if name in ("car_sedan", "car_suv", "car_truck"):
+        if not _VEHICLE_CACHE:
+            _init_default_vehicles()
+        return _VEHICLE_CACHE[name]
+    raise AttributeError(f"module 'vehicle' has no attribute '{name}'")
 
 
 def rolling_coeff_dynamic(speed_ms: float) -> float:

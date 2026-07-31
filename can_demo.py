@@ -8,8 +8,10 @@ from __future__ import annotations
 import time
 import random
 import struct
+from datetime import datetime
 
 from uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
+from can_bus_load_demo import frame_bits as calc_frame_bits
 
 
 # 1. CAN 帧定义
@@ -448,7 +450,6 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
 
     asc_lines = []
     if asc_log:
-        from datetime import datetime
         asc_lines.append("date " + datetime.now().strftime("%a %b %d %H:%M:%S %Y"))
         asc_lines.append("base hex  timestamps absolute")
         asc_lines.append("internal events logged")
@@ -457,10 +458,6 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
 
     last_report = -2.0
     frames_this_window = 0
-
-    def calc_frame_bits(dlc=8):
-        """标准 CAN 2.0A 帧总位数: SOF+ID+RTR+IDE+r0+DLC+Data+CRC+ACK+EOF+IFS"""
-        return 1 + 11 + 1 + 1 + 1 + 4 + dlc * 8 + 15 + 1 + 7 + 3
 
     for step in range(total_steps):
         sim_time = step * dt
@@ -475,19 +472,19 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
                 is_error = veh._rng.random() < error_rate
                 if is_error:
                     error_frames += 1
-                    frame_bits = 6  # 主动错误标志 = 6 dominant bits
+                    frame_bit_count = 6  # 主动错误标志 = 6 dominant bits
                     if asc_log:
                         asc_lines.append(f"{sim_time:11.6f} 1  ErrorFrame      E")
                 else:
                     frame_data = generate_frame(name, msg_def, veh, sim_time)
-                    frame_bits = calc_frame_bits(len(frame_data))
+                    frame_bit_count = calc_frame_bits(len(frame_data))
                     if asc_log:
                         data_hex = " ".join(f"{b:02X}" for b in frame_data)
                         asc_lines.append(
                             f"{sim_time:11.6f} 1  {msg_def['id']:>7d}             Rx   d 8 {data_hex}"
                         )
 
-                total_bits += frame_bits
+                total_bits += frame_bit_count
                 total_frames += 1
                 frames_this_window += 1
 

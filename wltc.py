@@ -62,6 +62,46 @@ _WLTC_WAYPOINTS = [
 _WLTC_DURATION = 1800  # 秒
 
 
+def _driver_p_controller(vehicle: Vehicle, target_speed: float,
+                         speed: float) -> tuple[float, float]:
+    """P-controller 驾驶员模型：根据速度误差计算油门开度和制动力。
+
+    三个区域：
+      - 加速 (target > speed): throttle = kp_accel * error + base
+      - 减速 (target < speed): brake = kp_brake * |error|
+      - 巡航 (target ≈ speed): 维持平衡油门，抵消行驶阻力
+
+    Returns:
+        (throttle, brake) — 均在 [0, 1] 范围内
+    """
+    speed_error = target_speed - speed
+    if speed_error > 0.1:
+        # 加速
+        throttle = min(1.0, 0.15 * speed_error + 0.05)
+        brake = 0.0
+    elif speed_error < -0.1:
+        # 减速
+        throttle = 0.0
+        brake = min(1.0, -0.2 * speed_error)
+    else:
+        # 巡航或停车
+        if target_speed < 0.5 and speed < 0.5:
+            throttle = 0.0
+            brake = 0.3 if speed > 0.05 else 0.0
+        else:
+            resistance = calc_resistance(vehicle, max(speed, 0.1))
+            cruise_torque = resistance * vehicle.wheel_radius
+            gear = vehicle.select_gear(speed * MS_TO_KMH)
+            if gear > 0:
+                total_ratio = vehicle.gear_ratios[gear - 1] * vehicle.final_drive
+                engine_torque_needed = cruise_torque / (total_ratio * vehicle.trans_efficiency)
+                throttle = min(1.0, engine_torque_needed / vehicle.max_torque + 0.02)
+            else:
+                throttle = 0.02
+            brake = 0.0
+    return throttle, brake
+
+
 def get_wltc_profile() -> list[float]:
     """从关键拐点线性插值生成 WLTC 1Hz 速度曲线 (km/h), 返回 list[float] len=1801"""
     profile = [0.0] * (_WLTC_DURATION + 1)
@@ -162,30 +202,7 @@ def simulate_transient_cycle(vehicle: Vehicle, cycle: list | None = None,
         target_kmh = target_speed * MS_TO_KMH
 
         # ---- 驾驶员模型 (P 控制器) ----
-        speed_error = target_speed - speed
-        if speed_error > 0.1:
-            throttle = min(1.0, 0.15 * speed_error + 0.05)  # 加速
-            brake = 0.0
-        elif speed_error < -0.1:
-            throttle = 0.0
-            brake = min(1.0, -0.2 * speed_error)            # 减速
-        else:
-            if target_speed < 0.5 and speed < 0.5:
-                # 停车：完全收油
-                throttle = 0.0
-                brake = 0.3 if speed > 0.05 else 0.0
-            else:
-                # 巡航：维持平衡油门
-                resistance = calc_resistance(vehicle, max(speed, 0.1))
-                cruise_torque = resistance * vehicle.wheel_radius
-                gear = vehicle.select_gear(speed * MS_TO_KMH)
-                if gear > 0:
-                    total_ratio = vehicle.gear_ratios[gear - 1] * vehicle.final_drive
-                    engine_torque_needed = cruise_torque / (total_ratio * vehicle.trans_efficiency)
-                    throttle = min(1.0, engine_torque_needed / vehicle.max_torque + 0.02)
-                else:
-                    throttle = 0.02
-                brake = 0.0
+        throttle, brake = _driver_p_controller(vehicle, target_speed, speed)
 
         # ---- 车辆动力学 ----
         if throttle > 0.05 and speed < 1:
@@ -340,28 +357,7 @@ def simulate_wltc(vehicle: Vehicle, dt: float = 0.2,
         target_speed = target_kmh * KMH_TO_MS
 
         # ---- 驾驶员模型 ----
-        speed_error = target_speed - speed
-        if speed_error > 0.1:
-            throttle = min(1.0, 0.15 * speed_error + 0.05)
-            brake = 0.0
-        elif speed_error < -0.1:
-            throttle = 0.0
-            brake = min(1.0, -0.2 * speed_error)
-        else:
-            if target_speed < 0.5 and speed < 0.5:
-                throttle = 0.0
-                brake = 0.3 if speed > 0.05 else 0.0
-            else:
-                resistance = calc_resistance(vehicle, max(speed, 0.1))
-                cruise_tq = resistance * vehicle.wheel_radius
-                g = vehicle.select_gear(speed * MS_TO_KMH)
-                if g > 0:
-                    ratio = vehicle.gear_ratios[g - 1] * vehicle.final_drive
-                    tq = cruise_tq / (ratio * vehicle.trans_efficiency)
-                    throttle = min(1.0, tq / vehicle.max_torque + 0.02)
-                else:
-                    throttle = 0.02
-                brake = 0.0
+        throttle, brake = _driver_p_controller(vehicle, target_speed, speed)
 
         # ---- 车辆动力学 ----
         if throttle > 0.05 and speed < 1:

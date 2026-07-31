@@ -206,8 +206,10 @@ class TestDTC:
             assert len(dtc["ecu"]) > 0
 
     def test_simulate_dtc_check_runs(self):
-        """simulate_dtc_check should run without error (print-only function)."""
-        simulate_dtc_check()
+        """simulate_dtc_check should return a dict with active_codes and details."""
+        result = simulate_dtc_check()
+        assert "active_codes" in result
+        assert "details" in result
 
 
 # generate_dbc
