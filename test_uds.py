@@ -227,3 +227,24 @@ class TestSecurityAccess:
         resp = server.handle_request(bytes([UDSSID.SECURITY_ACCESS, 0x02, 0x00, 0x00]))
         assert resp[0] == NEGATIVE_RESPONSE_SID
         assert resp[2] == NRC.CONDITIONS_NOT_CORRECT
+
+    def test_request_seed_suppress_positive_response(self, server):
+        """0x81 requestSeed + SPR：正响应被抑制（b""），但 seed 仍被记录"""
+        resp = server.handle_request(bytes([UDSSID.SECURITY_ACCESS, 0x81]))
+        assert resp == b""
+        assert hasattr(server, "_pending_seed"), "SPR 下 seed 仍应生成"
+
+    def test_send_key_suppress_positive_response(self, server):
+        """0x82 sendKey + SPR：解锁成功但正响应被抑制"""
+        resp = server.handle_request(bytes([UDSSID.SECURITY_ACCESS, 0x01]))
+        seed = int.from_bytes(resp[2:4], "big")
+        key = seed ^ 0x5555
+        resp = server.handle_request(bytes([UDSSID.SECURITY_ACCESS, 0x82]) + key.to_bytes(2, "big"))
+        assert resp == b""
+        assert server.session.security_level == 1, "SPR 下解锁逻辑仍应生效"
+
+    def test_spr_error_still_returns_negative(self, server):
+        """SPR 只抑制正响应，负响应仍正常返回"""
+        resp = server.handle_request(bytes([UDSSID.SECURITY_ACCESS, 0x82, 0x00, 0x00]))
+        assert resp[0] == NEGATIVE_RESPONSE_SID
+        assert resp[2] == NRC.CONDITIONS_NOT_CORRECT

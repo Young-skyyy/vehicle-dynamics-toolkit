@@ -275,24 +275,28 @@ class ECUDiagnosticServer:
     def _handle_security_access(self, request: bytes) -> bytes:
         """0x27 Security Access：requestSeed (0x01) / sendKey (0x02)。
 
+        subfunction 最高位 (0x80) 为 Suppress Positive Response (SPR)：
+        - 置位时正响应被抑制（返回 b""），负响应仍正常发送
+        - requestSeed = 0x01 / 0x81，sendKey = 0x02 / 0x82
+
         requestSeed: 返回 2 字节随机数
         sendKey:     key = seed ^ 0x5555 (16-bit XOR)，校验通过提升 security_level
         """
         if len(request) < 2:
             return self._negative_response(UDSSID.SECURITY_ACCESS, NRC.INCORRECT_MESSAGE_LENGTH)
-        sub = request[1]
 
-        if sub == 0x01:  # requestSeed
-            # 部分子功能（奇数）需要 suppress positive response
-            suppress = (sub & 0x80) != 0
-            actual_sub = sub & 0x7F
+        sub = request[1]
+        suppress = (sub & 0x80) != 0  # bit7 = Suppress Positive Response
+        actual_sub = sub & 0x7F
+
+        if actual_sub == 0x01:  # requestSeed
             self._pending_seed = random.randint(0, 0xFFFF)
             if suppress:
                 return b""  # 抑制正响应
             return bytes([UDSSID.SECURITY_ACCESS + POSITIVE_RESPONSE_OFFSET, 0x01]) + \
                 self._pending_seed.to_bytes(2, "big")
 
-        elif sub == 0x02:  # sendKey
+        elif actual_sub == 0x02:  # sendKey
             if len(request) < 4:
                 return self._negative_response(UDSSID.SECURITY_ACCESS, NRC.INCORRECT_MESSAGE_LENGTH)
             if not hasattr(self, "_pending_seed"):
@@ -302,6 +306,8 @@ class ECUDiagnosticServer:
             if received_key == expected_key:
                 self.session.security_level = 1
                 del self._pending_seed
+                if suppress:
+                    return b""  # 抑制正响应
                 return bytes([UDSSID.SECURITY_ACCESS + POSITIVE_RESPONSE_OFFSET, 0x02])
             else:
                 return self._negative_response(UDSSID.SECURITY_ACCESS, NRC.REQUEST_OUT_OF_RANGE)
