@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0] — 2026-08-09
+
+### 新增
+
+- **ROS2 集成** (`ros2_ws/`)
+  - `vehicle_dynamics_node`: 纯纵向动力学 ROS2 节点，100Hz 仿真闭环
+    - 订阅 `/vehicle/throttle` + `/vehicle/brake`，发布 `/vehicle/velocity`、`/vehicle/position`、`/vehicle/accel`、`/vehicle/engine_rpm`
+    - 发动机外特性扭矩曲线（归一化 + 峰值扭矩缩放）、行驶阻力（滚动 + 空气阻力）、怠速蠕行
+    - 全参数化：mass、max_torque、cd、frontal_area、rolling_coeff、wheel_radius、gear_ratio 均可通过 ROS2 parameter 配置
+  - `throttle_pub`: 恒定油门指令节点，用于测试闭环
+  - `vehicle_sim.launch.py`: launch 文件一键启动仿真
+  - 构建系统：colcon + ament_python，纯 Python（rclpy + std_msgs）
+- **WSL2 部署指南**：Ubuntu 22.04 + ROS2 Humble 环境搭建（DNS 修复、ROS2 安装脚本）
+
 ## [0.3.0] — 2026-07-31
 
 ### 新增
