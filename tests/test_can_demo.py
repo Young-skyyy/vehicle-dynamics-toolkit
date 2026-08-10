@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """Pytest unit tests for can_demo.py"""
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 import pytest
 import os
-from can_demo import (
+from vehicle_dynamics_toolkit.can_demo import (
     CAN_MESSAGES,
     DTC_DATABASE,
     encode_signal,

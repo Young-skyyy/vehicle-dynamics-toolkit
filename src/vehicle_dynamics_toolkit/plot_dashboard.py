@@ -11,14 +11,14 @@ import numpy as np
 import math
 from scipy.interpolate import RectBivariateSpline
 
-from bsfc import _BSFC_RPM_GRID, _BSFC_LOAD_GRID, _BSFC_GASOLINE
-from vehicle import car_sedan, car_following_simulation, acc_simulation
-from lateral_dynamics import (
+from .bsfc import _BSFC_RPM_GRID, _BSFC_LOAD_GRID, _BSFC_GASOLINE
+from .vehicle import car_sedan, car_following_simulation, acc_simulation
+from .lateral_dynamics import (
     calc_steady_state_cornering,
     simulate_step_steer,
 )
-from _plot_utils import setup_chinese_font, get_label
-from _constants import KMH_TO_MS
+from ._plot_utils import setup_chinese_font, get_label
+from .vehicle import KMH_TO_MS
 
 
 def plot_dashboard(vehicle=None, save_path=None):

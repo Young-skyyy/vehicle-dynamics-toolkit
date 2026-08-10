@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
 
-from bsfc import _BSFC_RPM_GRID, _BSFC_LOAD_GRID, _BSFC_GASOLINE
-from _plot_utils import setup_chinese_font, get_label
+from .bsfc import _BSFC_RPM_GRID, _BSFC_LOAD_GRID, _BSFC_GASOLINE
+from ._plot_utils import setup_chinese_font, get_label
 
 
 def plot_bsfc_map(save_path=None):

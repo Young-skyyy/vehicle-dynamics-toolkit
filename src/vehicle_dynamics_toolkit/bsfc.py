@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import math
 
-from _constants import KMH_TO_MS, SECONDS_PER_HOUR, SECONDS_PER_MINUTE
-from vehicle import Vehicle, calc_resistance, car_sedan, car_suv, car_truck
+from .vehicle import KMH_TO_MS, SECONDS_PER_HOUR, SECONDS_PER_MINUTE
+from .vehicle import Vehicle, calc_resistance, car_sedan, car_suv, car_truck
 
 
 # ---- BSFC Map 定义 ----

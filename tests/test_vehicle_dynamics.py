@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """Pytest unit tests for vehicle dynamics module"""
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 import pytest
 import math
-from _constants import G, RHO_AIR, KMH_TO_MS
-from vehicle import (
+from vehicle_dynamics_toolkit.vehicle import G, RHO_AIR, KMH_TO_MS
+from vehicle_dynamics_toolkit.vehicle import (
     Vehicle,
     calc_resistance,
     calc_braking_distance,
@@ -22,7 +26,7 @@ from vehicle import (
     car_following_simulation,
     acc_simulation,
 )
-from lateral_dynamics import (
+from vehicle_dynamics_toolkit.lateral_dynamics import (
     calc_slip_angles,
     calc_cornering_forces,
     calc_pacejka_lateral_force,
@@ -36,14 +40,14 @@ from lateral_dynamics import (
     calc_steady_cornering_table,
     calc_step_steer_response,
 )
-from bsfc import (
+from vehicle_dynamics_toolkit.bsfc import (
     _interpolate_bsfc,
     _calc_l100_raw,
     _BSFC_RPM_GRID,
     _BSFC_LOAD_GRID,
     calc_fuel_table,
 )
-from wltc import (
+from vehicle_dynamics_toolkit.wltc import (
     get_wltc_profile,
     _WLTC_DURATION,
 )

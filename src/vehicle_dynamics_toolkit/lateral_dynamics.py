@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import math
 
-from _constants import G, KMH_TO_MS
-from vehicle import Vehicle
+from .vehicle import G, KMH_TO_MS
+from .vehicle import Vehicle
 
 
 def calc_slip_angles(vehicle: Vehicle, vx_ms: float, vy_ms: float,
@@ -151,13 +151,33 @@ def calc_steady_state_cornering(vehicle: Vehicle, vx_kmh: float,
     }
 
 
+def _step_derivatives(vehicle: Vehicle, vx: float, vy: float, r: float,
+                       delta: float, m: float, Iz: float, a: float, b: float,
+                       Cf: float, Cr: float, tire_model: str
+                       ) -> tuple[float, float]:
+    """Compute d/dt [vy, r] at current state for 2-DOF bicycle model."""
+    alpha_f = (vy + a * r) / vx - delta if vx > 0 else 0.0
+    alpha_r = (vy - b * r) / vx if vx > 0 else 0.0
+
+    if tire_model == "pacejka":
+        Fyf, Fyr = calc_pacejka_cornering_forces(vehicle, alpha_f, alpha_r)
+    else:
+        Fyf = -Cf * alpha_f
+        Fyr = -Cr * alpha_r
+
+    dvy = (Fyf + Fyr) / m - vx * r
+    dr = (a * Fyf - b * Fyr) / Iz
+    return dvy, dr
+
+
 def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
                         steer_angle_deg: float, duration_s: float = 5,
                         dt: float = 0.01,
-                        tire_model: str = "linear") -> list[dict]:
+                        tire_model: str = "linear",
+                        method: str = "euler") -> list[dict]:
     """阶跃转向瞬态响应：给定车速和方向盘转角，仿真横摆响应
 
-    使用 2-DOF 自行车模型，欧拉积分
+    使用 2-DOF 自行车模型。
     状态变量: [vy, r]（侧向速度、横摆角速度）
 
     Args:
@@ -167,6 +187,7 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
         duration_s:       仿真时长 (s)
         dt:               积分步长 (s)
         tire_model:       轮胎模型 "linear"（线性 Fy=-Cα·α）或 "pacejka"（魔术公式）
+        method:           数值积分方法 "euler"（欧拉法）或 "rk4"（四阶 Runge-Kutta）
 
     Returns:
         list[dict]，每步含: time, vy, yaw_rate_rad, yaw_rate_deg, lateral_acc_g
@@ -177,6 +198,8 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
     Iz = vehicle.yaw_inertia
     a = vehicle.cg_to_front
     b = vehicle.cg_to_rear
+    Cf = vehicle.cornering_stiffness_f
+    Cr = vehicle.cornering_stiffness_r
 
     # 初始状态
     vy = 0.0
@@ -185,23 +208,6 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
     history: list[dict] = []
     t = 0.0
     while t <= duration_s:
-        # 前后轮侧偏角
-        alpha_f = (vy + a * r) / vx - delta if vx > 0 else 0.0
-        alpha_r = (vy - b * r) / vx if vx > 0 else 0.0
-
-        # 侧向力 — 根据 tire_model 选择线性或 Pacejka
-        if tire_model == "pacejka":
-            Fyf, Fyr = calc_pacejka_cornering_forces(vehicle, alpha_f, alpha_r)
-        else:
-            Cf = vehicle.cornering_stiffness_f
-            Cr = vehicle.cornering_stiffness_r
-            Fyf = -Cf * alpha_f
-            Fyr = -Cr * alpha_r
-
-        # 状态方程
-        dvy = (Fyf + Fyr) / m - vx * r
-        dr = (a * Fyf - b * Fyr) / Iz
-
         history.append({
             "time": round(t, 4),
             "vy": round(vy, 6),
@@ -210,9 +216,27 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
             "lateral_acc_g": round(vx * r / G, 6),
         })
 
-        # 欧拉积分
-        vy += dvy * dt
-        r += dr * dt
+        if method == "rk4":
+            k1_vy, k1_r = _step_derivatives(
+                vehicle, vx, vy, r, delta, m, Iz, a, b, Cf, Cr, tire_model)
+            k2_vy, k2_r = _step_derivatives(
+                vehicle, vx, vy + 0.5 * dt * k1_vy, r + 0.5 * dt * k1_r,
+                delta, m, Iz, a, b, Cf, Cr, tire_model)
+            k3_vy, k3_r = _step_derivatives(
+                vehicle, vx, vy + 0.5 * dt * k2_vy, r + 0.5 * dt * k2_r,
+                delta, m, Iz, a, b, Cf, Cr, tire_model)
+            k4_vy, k4_r = _step_derivatives(
+                vehicle, vx, vy + dt * k3_vy, r + dt * k3_r,
+                delta, m, Iz, a, b, Cf, Cr, tire_model)
+            vy += (dt / 6) * (k1_vy + 2 * k2_vy + 2 * k3_vy + k4_vy)
+            r += (dt / 6) * (k1_r + 2 * k2_r + 2 * k3_r + k4_r)
+        else:
+            # 欧拉积分（默认）
+            dvy, dr = _step_derivatives(
+                vehicle, vx, vy, r, delta, m, Iz, a, b, Cf, Cr, tire_model)
+            vy += dvy * dt
+            r += dr * dt
+
         t += dt
 
     return history
@@ -264,14 +288,16 @@ def calc_steady_cornering_table(vehicle: Vehicle) -> list[dict]:
 
 def calc_step_steer_response(vehicle: Vehicle, vx_kmh: float = 80,
                              steer_deg: float = 3,
-                             tire_model: str = "linear") -> dict:
+                             tire_model: str = "linear",
+                             method: str = "euler") -> dict:
     """阶跃转向瞬态响应，返回结构化数据。
 
     Args:
         tire_model: "linear" 或 "pacejka"
+        method:     积分方法 "euler" 或 "rk4"
     """
     history = simulate_step_steer(vehicle, vx_kmh, steer_deg, duration_s=3,
-                                   tire_model=tire_model)
+                                   tire_model=tire_model, method=method)
     result = calc_steady_state_cornering(vehicle, vx_kmh, steer_deg)
     final = history[-1]
     final_r = final["yaw_rate_deg"]
@@ -284,4 +310,5 @@ def calc_step_steer_response(vehicle: Vehicle, vx_kmh: float = 80,
         "final_yaw_rate": final_r,
         "final_lateral_acc": final_ay,
         "tire_model": tire_model,
+        "method": method,
     }

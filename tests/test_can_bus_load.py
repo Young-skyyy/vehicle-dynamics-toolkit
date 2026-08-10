@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """Pytest unit tests for can_bus_load_demo.py — 总线负载率计算 & 丢包算法"""
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 import pytest
 import io
 import sys
-from can_bus_load_demo import (
+from vehicle_dynamics_toolkit.can_bus_load_demo import (
     ECUS,
     frame_bits,
     simulate,
