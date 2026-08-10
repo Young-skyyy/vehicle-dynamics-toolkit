@@ -110,4 +110,4 @@ from .uds import (
 from .plotting import plot_bsfc_map
 from .plot_dashboard import plot_dashboard
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"

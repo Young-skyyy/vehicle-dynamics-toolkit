@@ -37,26 +37,37 @@ DEFAULT_CG_FRONT_RATIO = 0.45
 
 # ---- 发动机外特性扭矩曲线 ----
 
-# 归一化扭矩曲线（以最大扭矩为 1.0），参考典型 2.0L NA 汽油机
-_NORMALIZED_TORQUE = {
+# 归一化扭矩曲线（以最大扭矩为 1.0）
+# NA:   典型 2.0L 自然吸气汽油机，扭矩随转速先升后降
+# Turbo: 涡轮增压汽油机，低转即可输出峰值扭矩平台，高转衰减更快
+_NORMALIZED_TORQUE_NA = {
     800: 0.30, 1000: 0.50, 1500: 0.70, 2000: 0.86,
     2500: 0.93, 3000: 0.97, 3500: 1.00, 4000: 0.99,
     4500: 0.95, 5000: 0.88, 5500: 0.78, 6000: 0.67,
 }
+_NORMALIZED_TORQUE_TURBO = {
+    800: 0.22, 1000: 0.40, 1500: 0.78, 1750: 0.92, 2000: 1.00,
+    2500: 1.00, 3000: 0.97, 3500: 0.90, 4000: 0.82,
+    4500: 0.72, 5000: 0.60, 5500: 0.50, 6000: 0.40,
+}
 
 
 def _make_default_torque_curve(max_torque_nm: float, idle_rpm: float = 800,
-                                max_rpm: float = 6000) -> dict[int, float]:
+                                max_rpm: float = 6000,
+                                engine_type: str = "na") -> dict[int, float]:
     """从归一化曲线 + 最大扭矩生成外特性扭矩曲线 (rpm → Nm)。"""
+    tq_map = _NORMALIZED_TORQUE_NA if engine_type == "na" else _NORMALIZED_TORQUE_TURBO
     curve = {}
-    for rpm, ratio in _NORMALIZED_TORQUE.items():
+    for rpm, ratio in tq_map.items():
         if idle_rpm <= rpm <= max_rpm:
             curve[rpm] = round(ratio * max_torque_nm, 1)
     # 确保怠速和红线在曲线里
+    idle_ratio = tq_map.get(int(idle_rpm), tq_map[min(tq_map.keys(), key=lambda k: abs(k - idle_rpm))])
+    redline_ratio = tq_map.get(int(max_rpm), tq_map[min(tq_map.keys(), key=lambda k: abs(k - max_rpm))])
     if idle_rpm not in curve:
-        curve[int(idle_rpm)] = round(0.30 * max_torque_nm, 1)
+        curve[int(idle_rpm)] = round(idle_ratio * max_torque_nm, 1)
     if max_rpm not in curve:
-        curve[int(max_rpm)] = round(0.67 * max_torque_nm, 1)
+        curve[int(max_rpm)] = round(redline_ratio * max_torque_nm, 1)
     return dict(sorted(curve.items()))
 
 
@@ -108,6 +119,7 @@ class Vehicle:
                  fuel_density_gl: float = 740,
                  fuel_type: str = "gasoline",
                  torque_curve: dict[int, float] | None = None,
+                 engine_type: str = "na",  # "na"=自然吸气 / "turbo"=涡轮增压
                  # 横向动力学参数
                  wheelbase_m: float | None = None,
                  cg_to_front_m: float | None = None,
@@ -143,7 +155,7 @@ class Vehicle:
         # 发动机外特性扭矩曲线 {rpm: Nm}，未提供时根据 max_torque 自动生成
         self.torque_curve: dict[int, float] = (
             torque_curve or
-            _make_default_torque_curve(max_torque_nm, idle_rpm, max_rpm)
+            _make_default_torque_curve(max_torque_nm, idle_rpm, max_rpm, engine_type)
         )
         # 横向动力学参数
         self.wheelbase: float = wheelbase_m or 2.65          # 轴距（m），典型轿车
