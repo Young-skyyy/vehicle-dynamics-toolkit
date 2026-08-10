@@ -7,8 +7,6 @@ Python library for vehicle dynamics simulation, analysis and visualization.
 Modules:
     vehicle      — Vehicle physics, powertrain, longitudinal dynamics
     lateral      — Bicycle model, understeer gradient, Pacejka tire
-    bsfc         — BSFC fuel map, bilinear interpolation
-    wltc         — WLTC Class 3 transient cycle simulation
     can_demo     — CAN bus multi-ECU simulation, DBC export
     uds          — UDS (ISO 14229) diagnostic protocol stack
     can_bus_load — CAN bus load rate simulation
@@ -55,22 +53,6 @@ from .lateral_dynamics import (
     calc_step_steer_response,
 )
 
-# ── BSFC ──
-from .bsfc import (
-    calc_fuel_consumption,
-    calc_fuel_table,
-    _calc_l100_raw,
-    _interpolate_bsfc,
-)
-
-# ── WLTC ──
-from .wltc import (
-    get_wltc_profile,
-    get_wltc_summary,
-    simulate_transient_cycle,
-    simulate_wltc,
-)
-
 # ── CAN ──
 from .can_demo import (
     CAN_MESSAGES,
@@ -106,8 +88,4 @@ from .uds import (
     print_diagnostic_session,
 )
 
-# ── Visualization ──
-from .plotting import plot_bsfc_map
-from .plot_dashboard import plot_dashboard
-
-__version__ = "2.0.1"
+__version__ = "3.0.0"

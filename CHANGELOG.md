@@ -1,5 +1,30 @@
 # Changelog
 
+## [3.0.0] — 2026-08-10
+
+### 重大变更
+
+- **砍掉 BSFC/WLTC 油耗模块**：移除 `bsfc.py` 和 `wltc.py`，项目聚焦汽车软件测试方向（CAN / UDS / 横向动力学）
+- **README 重写**：从功能清单叙事转为问题解决叙事——"解决了什么问题、效果如何"
+- **删除自夸标签**：移除 "engineering-grade"、"production-ready" 等未经验证的表述
+- **清理陈旧副本**：删除根目录 `vehicle-dynamics-toolkit/` 目录（v0.4.0 扁平结构残骸）
+
+### 移除
+
+- `bsfc.py` — BSFC 万有特性油耗模型（双线性插值查表 + L/100km 计算）
+- `wltc.py` — WLTC Class 3 瞬态油耗仿真
+- `plotting.py` 中 `plot_bsfc_map()` 函数
+- `plot_dashboard.py` 中 BSFC 油耗面板
+- `validation.py` 中油耗校验函数（`validate_fuel_consumption`）
+- 相关测试类：`TestInterpolateBSFC`、`TestFuelConsumption`、`TestWLTCProfile`、`TestWLTCDataQuality`、`TestFuelTable`、`TestRealWorldBenchmarks`
+
+### 变更
+
+- `pyproject.toml`：更新 description 和 keywords，聚焦 CAN / UDS / 横向动力学 / 汽车测试
+- `__init__.py`：移除 BSFC/WLTC 导出
+- `__main__.py`：移除油耗和 BSFC 仪表盘演示
+- 测试从 240 条精简为 211 条，全部通过
+
 ## [2.0.1] — 2026-08-10
 
 ### 修复

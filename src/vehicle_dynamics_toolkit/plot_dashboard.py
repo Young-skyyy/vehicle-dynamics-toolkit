@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-BSFC 万有特性 + 横向动力学 + 跟车/ACC 五合一汇总图
-五面板：发动机效率 Map / 稳态转向 / 转弯半径 / 阶跃瞬态 / ACC 跟车
+横向动力学 + 跟车/ACC 四合一汇总图
+四面板：稳态转向 / 转弯半径 / 阶跃瞬态 / ACC 跟车
 """
 
 import matplotlib
@@ -9,20 +9,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import math
-from scipy.interpolate import RectBivariateSpline
 
-from .bsfc import _BSFC_RPM_GRID, _BSFC_LOAD_GRID, _BSFC_GASOLINE
-from .vehicle import car_sedan, car_following_simulation, acc_simulation
+from .vehicle import car_sedan, acc_simulation, KMH_TO_MS
 from .lateral_dynamics import (
     calc_steady_state_cornering,
     simulate_step_steer,
 )
 from ._plot_utils import setup_chinese_font, get_label
-from .vehicle import KMH_TO_MS
 
 
 def plot_dashboard(vehicle=None, save_path=None):
-    """五合一仪表盘: BSFC Map + 稳态转向 + 转弯半径 + 阶跃瞬态 + ACC 跟车"""
+    """四合一仪表盘: 稳态转向 + 转弯半径 + 阶跃瞬态 + ACC 跟车"""
     if vehicle is None:
         vehicle = car_sedan
 
@@ -30,32 +27,27 @@ def plot_dashboard(vehicle=None, save_path=None):
     has_font, _ = setup_chinese_font()
 
     fig = plt.figure(figsize=(18, 14))
-    title_text = f"{vehicle.name} — 动力总成 & 横向动力学 & IDM 跟车 综合分析" if has_font else \
-                 f"{vehicle.name} — Powertrain & Lateral & IDM Analysis"
+    title_text = f"{vehicle.name} — 横向动力学 & IDM 跟车 综合分析" if has_font else \
+                 f"{vehicle.name} — Lateral & IDM Analysis"
     fig.suptitle(title_text, fontsize=16, fontweight="bold", y=0.99)
 
-    gs = fig.add_gridspec(3, 2, hspace=0.35, wspace=0.30,
-                          height_ratios=[1, 1, 0.85])
+    gs = fig.add_gridspec(2, 2, hspace=0.35, wspace=0.30)
 
-    # (0,0): BSFC Map
+    # (0,0): 稳态转向响应
     ax1 = fig.add_subplot(gs[0, 0])
-    _draw_bsfc_panel(ax1)
+    _draw_steady_cornering_panel(ax1, vehicle)
 
-    # (0,1): 稳态转向响应
+    # (0,1): 转弯半径 vs 车速
     ax2 = fig.add_subplot(gs[0, 1])
-    _draw_steady_cornering_panel(ax2, vehicle)
+    _draw_turn_radius_panel(ax2, vehicle)
 
-    # (1,0): 转弯半径 vs 车速
+    # (1,0): 阶跃转向瞬态响应
     ax3 = fig.add_subplot(gs[1, 0])
-    _draw_turn_radius_panel(ax3, vehicle)
+    _draw_step_steer_panel(ax3, vehicle)
 
-    # (1,1): 阶跃转向瞬态响应
+    # (1,1): ACC 跟车响应
     ax4 = fig.add_subplot(gs[1, 1])
-    _draw_step_steer_panel(ax4, vehicle)
-
-    # (2,:): ACC 跟车响应（跨两列）
-    ax5 = fig.add_subplot(gs[2, :])
-    _draw_acc_panel(ax5, vehicle)
+    _draw_acc_panel(ax4, vehicle)
 
     plt.tight_layout(rect=[0, 0, 1, 0.97])
 
@@ -65,61 +57,6 @@ def plot_dashboard(vehicle=None, save_path=None):
     plt.savefig(save_path, dpi=150)
     print(f"[仪表盘已保存] {save_path}")
     plt.close()
-
-
-def _draw_bsfc_panel(ax):
-    """BSFC 等高线图 + 等功率线"""
-    rpm = np.array(_BSFC_RPM_GRID)
-    load_pct = np.array(_BSFC_LOAD_GRID) * 100
-    bsfc_data = np.array(_BSFC_GASOLINE)
-
-    spline = RectBivariateSpline(load_pct, rpm, bsfc_data, kx=3, ky=3)
-    rpm_fine = np.linspace(rpm[0], rpm[-1], 200)
-    load_fine = np.linspace(load_pct[0], load_pct[-1], 150)
-    R_fine, L_fine = np.meshgrid(rpm_fine, load_fine)
-    bsfc_fine = spline(load_fine, rpm_fine)
-
-    levels = [220, 240, 260, 280, 300, 330, 360, 400, 450, 500]
-    cs = ax.contourf(R_fine, L_fine, bsfc_fine, levels=levels, cmap="RdYlGn_r", alpha=0.85)
-    ax.contour(R_fine, L_fine, bsfc_fine, levels=levels, colors="black", linewidths=0.3)
-
-    # 等功率线：P = T × ω → load% = P / (Tmax × RPM × 2π/60)
-    # 参考 2.0L NA 汽油机 Tmax=180 Nm
-    max_torque = 180   # Nm
-    rpm_range = np.linspace(1000, 6200, 200)
-    power_levels_kw = [10, 20, 40, 60, 80, 100]
-
-    for pk in power_levels_kw:
-        # load = P / (Tmax × rpm × 2π/60), load% = load × 100
-        load_vals = pk * 60000 / (max_torque * rpm_range * 2 * math.pi) * 100
-        # 截断超出 view 的部分
-        mask = (load_vals >= 0) & (load_vals <= 105)
-        ax.plot(rpm_range[mask], load_vals[mask],
-                color="white", linewidth=0.8, linestyle="--", alpha=0.5)
-
-        # 在曲线末端标注功率值
-        valid_rpm = rpm_range[mask]
-        valid_load = load_vals[mask]
-        if len(valid_rpm) > 0:
-            mid_i = len(valid_rpm) // 2
-            ax.annotate(f"{pk}kW", (valid_rpm[mid_i], valid_load[mid_i] + 1),
-                        fontsize=7, color="white", alpha=0.7, ha="center")
-
-    # 三个典型工况点
-    points = [
-        (800, 5, get_label("怠速"), "red"),
-        (2500, 75, get_label("经济巡航"), "darkgreen"),
-        (5500, 90, get_label("全油门"), "darkred"),
-    ]
-    for r, l, label, color in points:
-        ax.plot(r, l, "o", color=color, markersize=10, markeredgecolor="white", markeredgewidth=1.5)
-        ax.annotate(label, (r + 100, l + 3), fontsize=8, color=color, fontweight="bold")
-
-    ax.set_xlabel(get_label("发动机转速 (RPM)"))
-    ax.set_ylabel(get_label("扭矩负荷比 (%)"))
-    ax.set_title(get_label("BSFC 万有特性 Map + 等功率线"), fontweight="bold")
-    fig = ax.figure
-    fig.colorbar(cs, ax=ax, label="BSFC (g/kWh)", shrink=0.8)
 
 
 def _draw_steady_cornering_panel(ax, vehicle):

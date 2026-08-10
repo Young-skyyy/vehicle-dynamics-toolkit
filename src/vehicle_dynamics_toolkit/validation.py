@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 from .vehicle import Vehicle, simulate_acceleration, calc_braking_distance
-from .bsfc import _calc_l100_raw
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 实车基准数据
@@ -53,7 +52,6 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
 
 ACCEL_TOLERANCE_PCT = 15
 BRAKING_TOLERANCE_PCT = 20  # 放宽：简化公式不含 ABS/重量转移/轮胎非线性
-FUEL_TOLERANCE_PCT = 20
 
 
 def _lookup_benchmark(vehicle: Vehicle) -> dict | None:
@@ -137,37 +135,6 @@ def validate_braking(speed_kmh: float = 100, friction_coeff: float = 0.90) -> di
         "verdict": _verdict(error, BRAKING_TOLERANCE_PCT),
     }
 
-
-def validate_fuel_consumption(vehicle: Vehicle, speed_kmh: float = 90) -> dict:
-    """校验等速 90 km/h 油耗。
-
-    Args:
-        vehicle:  待校验的 Vehicle 对象
-        speed_kmh: 等速车速 (km/h)，默认 90
-
-    Returns:
-        dict: {model_l100, benchmark_l100, error_pct, verdict}
-    """
-    model_fuel = round(_calc_l100_raw(vehicle, speed_kmh), 1)
-
-    benchmark = _lookup_benchmark(vehicle)
-    if benchmark is None:
-        return {
-            "model_l100": model_fuel,
-            "benchmark_l100": None,
-            "error_pct": None,
-            "verdict": "N/A (无基准数据)",
-        }
-
-    bench_fuel = benchmark["fuel_wltc_l100"]
-    error = _error_pct(model_fuel, bench_fuel)
-    return {
-        "model_l100": model_fuel,
-        "benchmark_l100": bench_fuel,
-        "error_pct": round(error, 1),
-        "verdict": _verdict(error, FUEL_TOLERANCE_PCT),
-    }
-
 # ═══════════════════════════════════════════════════════════════════════════
 # 综合报告
 # ═══════════════════════════════════════════════════════════════════════════
@@ -177,7 +144,7 @@ def print_validation_report() -> None:
     """生成并打印格式化的校验报告表格。
 
     根据 REAL_VEHICLE_BENCHMARKS 为每款车创建匹配的 Vehicle 对象，
-    分别运行加速、制动、油耗校验，输出 Markdown 风格对比表格。
+    分别运行加速、制动校验，输出 Markdown 风格对比表格。
     """
     # 为每款实车构造最匹配的 Vehicle 参数
     _vehicle_specs = {
@@ -224,7 +191,7 @@ def print_validation_report() -> None:
     print("\n" + "=" * len(header))
     print("  车辆动力学模型 — 实车基准校验报告")
     print("=" * len(header))
-    print(f"  加速容差: ±{ACCEL_TOLERANCE_PCT}%  制动容差: ±{BRAKING_TOLERANCE_PCT}%  油耗容差: ±{FUEL_TOLERANCE_PCT}%")
+    print(f"  加速容差: ±{ACCEL_TOLERANCE_PCT}%  制动容差: ±{BRAKING_TOLERANCE_PCT}%")
     print(sep)
     print(header)
     print(sep)
@@ -251,17 +218,8 @@ def print_validation_report() -> None:
             f"{_fmt_pct(brk_error):>7s}  {brk_verdict:>6s}"
         )
 
-        # 油耗
-        fuel = validate_fuel_consumption(v)
-        row_fuel = (
-            f"{v.name:<28s} {'等速90油耗':<10s} "
-            f"{fuel['model_l100']:>6.1f}L  {fuel['benchmark_l100']:>6.1f}L  "
-            f"{_fmt_pct(fuel['error_pct']):>7s}  {fuel['verdict']:>6s}"
-        )
-
         print(row_acc)
         print(row_brake)
-        print(row_fuel)
         if v is not vehicles[-1]:
             print(sep)
 
@@ -272,7 +230,6 @@ def print_validation_report() -> None:
     print("差异解释摘要:")
     print("  加速: " + explain_discrepancy("acceleration"))
     print("  制动: " + explain_discrepancy("braking"))
-    print("  油耗: " + explain_discrepancy("fuel"))
     print()
 
 
@@ -291,7 +248,7 @@ def explain_discrepancy(category: str) -> str:
     """返回模型输出与实车数据之间差异的原因说明。
 
     Args:
-        category: "acceleration" / "braking" / "fuel"
+        category: "acceleration" / "braking"
 
     Returns:
         str: 对应类别差异的解释文本
@@ -307,11 +264,6 @@ def explain_discrepancy(category: str) -> str:
             "（含 ABS 滑移率优化）。剩余差异源于未模拟制动热衰退、重量转移及"
             "轮胎-路面非线性摩擦特性（Pacejka 轮胎模型当前仅用于横向力计算）。"
         ),
-        "fuel": (
-            "油耗模型基于通用汽油机 BSFC 万有特性 Map，"
-            "未包含目标发动机的精确标定数据、冷启动/暖机热效应、附件功耗及实际传动效率波动，"
-            "因此等速油耗与 WLTC 综合工况基准存在差异。"
-        ),
     }
-    default_msg = f"未知类别 '{category}'，可选: acceleration / braking / fuel"
+    default_msg = f"未知类别 '{category}'，可选: acceleration / braking"
     return explanations.get(category, default_msg)
