@@ -17,7 +17,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  Layer 1 — Python Analysis & Simulation                         │
 │  vehicle.py · lateral_dynamics.py · can_demo.py · uds.py        │
-│  240+ pytest cases · GitHub Actions CI (3.10/3.11/3.12 + mypy)  │
+│  211+ pytest cases · GitHub Actions CI (3.10/3.11/3.12 + mypy)  │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 2 — C++ ROS2 Real-Time Nodes                             │
 │  vehicle_dynamics_node (rclcpp, 100 Hz)                         │
@@ -27,6 +27,62 @@
 ```
 
 Layer 2 C++ nodes port algorithms from Layer 1 Python models. Validation between layers uses [`scripts/compare_py_cpp.py`](scripts/compare_py_cpp.py): Python generates per-second reference JSON with the same default parameters as C++, then C++ output from recorded ROS2 bags is compared field-by-field against the reference. The C++ node measures real-time jitter to quantify timing deviations.
+
+---
+## Engineering Depth — Three Implementation Details Worth Noticing
+
+While the module list above covers what this project does, these three specific implementation choices show real engineering consideration beyond a simple feature checklist.
+
+### 1. UDS SecurityAccess SPR Bit (ISO 14229-1 §9.5)
+
+Most student UDS projects stop at `ReadDataByIdentifier`. SecurityAccess (0x27) with `requestSeed` / `sendKey` is uncommon. Handling the **Suppress Positive Response (SPR) bit** — the most significant bit of the sub-function byte — is rare even in industrial code:
+
+```python
+suppress = (sub & 0x80) != 0   # bit7 = SPR
+actual_sub = sub & 0x7F        # strip SPR to get real sub-function
+
+if actual_sub == 0x01:         # requestSeed (0x01 or 0x81)
+    self._pending_seed = random.randint(0, 0xFFFF)
+    if suppress:
+        return b""              # positive response suppressed
+    return bytes([0x67, 0x01]) + seed_bytes
+
+elif actual_sub == 0x02:       # sendKey (0x02 or 0x82)
+    # ...key validation...
+    if suppress:
+        return b""              # unlock succeeded, but response suppressed
+```
+
+SPR changes the protocol semantics: `0x81` ≠ `0x01`, even though both request a seed. The seed is still generated and stored so the subsequent `sendKey` can validate against it — but the ECU stays silent. Negative responses are never suppressed regardless of SPR. This behavior is documented with 3 dedicated test cases in `test_uds.py`.
+
+### 2. CAN Motorola/Intel Byte Order — Bit-Position-Aware Encoding
+
+CAN DBC files encode signal layout with a `start_bit | length @ byte_order` triplet like `24|16@0+`. The `@0` vs `@1` flag determines whether bits are laid out MSB-first (Motorola, bytes count down) or LSB-first (Intel, bytes count up). When a 16-bit signal starts at bit 24 in Motorola order, it spans byte 3 (bits 0–7) down to byte 2 (bits 0–7) — the most significant bits live in byte 3, the least significant in byte 2.
+
+The `_signal_bit_positions()` function decomposes this into an explicit position list:
+
+```python
+# Motorola 16-bit signal at start_bit=24:
+# Result: [(3, 0, 15), (3, 1, 14), ..., (3, 7, 8), (2, 0, 7), ..., (2, 7, 0)]
+#          byte 3, MSB (shift 15) → byte 2, LSB (shift 0)
+
+positions = _signal_bit_positions(start_bit=24, length=16, byte_order="motorola")
+assert positions[0]  == (3, 0, 15)   # MSB
+assert positions[-1] == (2, 7, 0)    # LSB
+```
+
+This is verified by test cases that round-trip encode → decode for mixed Motorola+Intel signals within a single CAN frame, and by explicit bit-position assertions matching the DBC standard.
+
+### 3. Model Validation — Self-Awareness Over Self-Promotion
+
+The 6-benchmark validation table in the section above is not just a green checkmark gallery. Each discrepancy is explained:
+
+| Discrepancy | Actual | Model | Why |
+|---|---|---|---|
+| Civic 100–0 braking | 37.0 m | 43.7 m (+18%) | Braking uses `v²/(2μg)` with fixed μ=0.90. Real braking involves weight transfer (adds load to front axle → higher peak μ), brake force distribution, tire nonlinearity at the friction ellipse limit, and thermal fade resistance — none of which are modeled here. |
+| Tiguan 0–100 acceleration | 9.0 s | 9.5 s (+5.6%) | Turbo torque plateau flattens the mid-range but drops faster at high RPM than the NA curve. The model captures this qualitatively but the exact falloff rate depends on turbo sizing (A/R ratio, boost curve) — which varies across the EA888 engine family. |
+
+Every FAIL-to-PASS fix (Tiguan engine type, braking friction coefficient) is documented in the [CHANGELOG](CHANGELOG.md). The validation module exists to expose model limitations, not to pretend they don't exist.
 
 ---
 
@@ -112,7 +168,7 @@ python3 src/uds_server/scripts/uds_test_client.py EMS
 
 ## Tests
 
-**240 pytest cases** across 4 test modules, covering:
+**211 pytest cases** across 4 test modules, covering:
 
 - **Vehicle dynamics** — engine torque, wheel force, acceleration (0–100 km/h), braking distance, resistance (SAE J2263 dynamic rolling), power breakdown by source, understeer gradient, characteristic/critical speed, steady-state cornering, step-steer transient response, Pacejka tire model (longitudinal and combined slip)
 - **CAN bus** — signal encode/decode (Motorola + Intel byte order), frame build/parse, multi-ECU simulation, DBC file generation, bus load calculation, overflow detection, edge cases
@@ -150,7 +206,7 @@ The ROS2 C++ build is also verified in CI — a separate job on `ubuntu-22.04` c
 │   └── _plot_utils.py             # matplotlib helpers
 │
 ├── tests/
-│   ├── test_vehicle_dynamics.py   # 139 tests — longitudinal + lateral + benchmarks
+│   ├── test_vehicle_dynamics.py   # 109 tests — longitudinal + lateral + benchmarks
 │   ├── test_can_demo.py           # 42 tests — CAN encode/decode, DBC, ECU simulation
 │   ├── test_uds.py                # 31 tests — UDS session, SecurityAccess, DTC
 │   └── test_can_bus_load.py       # 28 tests — bus load, baud rate, edge cases
