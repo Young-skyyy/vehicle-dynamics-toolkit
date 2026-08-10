@@ -6,10 +6,10 @@ UDS (ISO 14229) 诊断协议栈：Session / Security Access / DID / DTC / Tester
 """
 
 from __future__ import annotations
-
 import time
 import random
 from enum import IntEnum
+from .iso_tp import segment_payload, IsoTPReceiver, encode_vin, decode_vin
 
 
 # ---- UDS Service IDs ----
@@ -106,6 +106,7 @@ _STANDARD_DIDS: dict[int, dict[str, object]] = {
     0x0011: {"name": "节气门位置",   "len": 1, "unit": "%",     "scale": 0.4},
     0x004C: {"name": "油门踏板位置", "len": 1, "unit": "%",     "scale": 0.4},
     0x000F: {"name": "进气温度",     "len": 1, "unit": "degC",  "offset": -40},
+    0xF190: {"name": "VIN 车辆识别码", "len": 17, "unit": "",  "is_vin": True},
 }
 
 
@@ -162,6 +163,12 @@ class ECUDiagnosticServer:
         self.ecu_name = ecu_name
         self.session = DiagnosticSession()
         self.did_values: dict[int, float] = did_values or {}
+        # 非数值型 DID（如 VIN 17 字节字符串）
+        self.did_bytes: dict[int, bytes] = {}
+        # ISO-TP 多帧传输（懒惰初始化）
+        self._iso_tp_rx: IsoTPReceiver | None = None
+        self._pending_response: list[bytes] = []
+        self._pending_response_idx: int = 0
 
     def update_did(self, did: int, value: float):
         """更新 DID 实时值（由 CAN 仿真主循环调用）。"""
@@ -231,9 +238,16 @@ class ECUDiagnosticServer:
         if len(request) < 3:
             return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.INCORRECT_MESSAGE_LENGTH)
         did = (request[1] << 8) | request[2]
+
+        # 检查是否为 bytes 型 DID（如 VIN）
+        info = _STANDARD_DIDS.get(did, {"name": f"DID_{did:04X}", "len": 2, "unit": ""})
+        if info.get("is_vin"):
+            vin_data = self.did_bytes.get(did, encode_vin(self._DEFAULT_VIN))
+            return bytes([UDSSID.READ_DATA_BY_IDENTIFIER + POSITIVE_RESPONSE_OFFSET,
+                          request[1], request[2]]) + vin_data
+
         if did not in self.did_values:
             return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.REQUEST_OUT_OF_RANGE)
-        info = _STANDARD_DIDS.get(did, {"name": f"DID_{did:04X}", "len": 2, "unit": ""})
         raw_val = self.did_values[did]
         # 编码物理值 → 原始值
         scale = float(info.get("scale", 1))       # type: ignore[arg-type]
@@ -324,6 +338,76 @@ class ECUDiagnosticServer:
 
     def _negative_response(self, sid: int, nrc: int) -> bytes:
         return bytes([NEGATIVE_RESPONSE_SID, sid, nrc])
+
+    # ═════════════════════════════════════════════════════════════
+    # ISO-TP 多帧传输支持
+    # ═════════════════════════════════════════════════════════════
+
+    _DEFAULT_VIN = "WVWZZZ3CZ9E000001"  # 17位占位 VIN
+
+    def handle_iso_tp_frame(self, can_data: bytes) -> bytes | None:
+        """处理从 CAN 总线上接收的 ISO-TP 帧。
+
+        若是 SF 则直接调用 handle_request()；若是多帧（FF/CF）则内部缓冲重组，
+        完成后同样调用 handle_request()。返回的响应若需分段则由本方法负责
+        segment_payload() 封装。
+
+        Args:
+            can_data: CAN 帧 data 字段（8 字节，含 PCI 字节）
+
+        Returns:
+            bytes | None: 需发回 CAN 总线的响应帧（可能是多帧中的一帧），
+                          没有响应时返回 None
+        """
+        # 懒惰初始化 ISO-TP 接收端
+        if self._iso_tp_rx is None:
+            self._iso_tp_rx = IsoTPReceiver()
+
+        assembled, fc = self._iso_tp_rx.feed(can_data)
+
+        # 如果接收端需要发 FC 帧，优先回复 FC
+        if fc is not None:
+            return fc
+
+        # 数据尚未收全（后续 CF 会补上）
+        if assembled is None:
+            return None
+
+        # 完整请求已收到 → 处理
+        response = self.handle_request(assembled)
+
+        # 如果响应 ≤ 7 字节 → 直接封 SF 返回
+        if len(response) <= 7:
+            self._iso_tp_rx.reset()
+            self._pending_response = []
+            self._pending_response_idx = 0
+            return self._wrap_single_frame(response)
+
+        # 响应 > 7 字节 → segment_payload，返回第一帧，其余缓存
+        self._pending_response = segment_payload(response)
+        self._pending_response_idx = 1
+        self._iso_tp_rx.reset()
+        return self._pending_response[0]
+
+    def get_next_response_frame(self) -> bytes | None:
+        """轮询剩余的多帧响应（FC 交互后调用）。
+
+        Returns:
+            bytes | None: 下一帧 CF，没有更多帧时返回 None
+        """
+        if self._pending_response_idx >= len(self._pending_response):
+            self._pending_response = []
+            self._pending_response_idx = 0
+            return None
+        frame = self._pending_response[self._pending_response_idx]
+        self._pending_response_idx += 1
+        return frame
+
+    @staticmethod
+    def _wrap_single_frame(response: bytes) -> bytes:
+        """把 ≤7 字节的 UDS 响应封装为 ISO-TP Single Frame。"""
+        n = len(response)
+        return bytes([0x00 | n]) + response
 
 
 # ---- 诊断仪（模拟）----
