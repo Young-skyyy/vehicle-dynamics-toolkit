@@ -6,6 +6,7 @@
  *   0x10 DiagnosticSessionControl | 0x11 ECU Reset
  *   0x22 ReadDataByIdentifier     | 0x27 SecurityAccess
  *   0x19 ReadDTCInformation       | 0x3E TesterPresent
+ *   0xF190 VIN (ISO-TP multi-frame via iso_tp.hpp)
  *
  * @architecture
  *   ROS2 Service  /uds/request  (vehicle_msgs::srv::UdsRequest)
@@ -23,6 +24,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "vehicle_msgs/srv/uds_request.hpp"
+#include "iso_tp.hpp"
 
 using namespace std::chrono_literals;
 
@@ -116,6 +118,7 @@ const std::map<int, DidInfo> DID_DB = {
     {0x0011, {"节气门位置",   1, 0.4,  0.0}},
     {0x004C, {"油门踏板位置", 1, 0.4,  0.0}},
     {0x000F, {"进气温度",     1, 1.0, -40.0}},
+    {0xF190, {"VIN 车辆识别码", 17, 0.0, 0.0}},  // ISO-TP 多帧传输
 };
 
 // ═══════════════════════════════════════════════
@@ -124,7 +127,8 @@ const std::map<int, DidInfo> DID_DB = {
 class ECUDiagnosticServer {
 public:
     std::string ecu_name;
-    std::map<int, double> did_values;  // DID → 物理值
+    std::map<int, double> did_values;  // DID → 物理值 (数值型)
+    std::map<int, std::vector<uint8_t>> did_bytes;  // DID → 字节串 (如 VIN)
 
     // Session 服务权限表
     const std::map<std::string, std::set<uint8_t>> SESSION_SERVICES = {
@@ -224,11 +228,30 @@ private:
     }
 
     // ── 0x22 Read Data By Identifier ──
+    static constexpr const char* DEFAULT_VIN = "WVWZZZ3CZ9E000001";
+
     UdsResult handle_read_did(const std::vector<uint8_t>& payload) {
         if (payload.size() < 2) {
             return make_nr(SID_READ_DID, NRC_INCORRECT_MSG_LEN);
         }
         int did = (payload[0] << 8) | payload[1];
+
+        // VIN (0xF190): 17-byte string, requires ISO-TP
+        if (did == 0xF190) {
+            auto it = did_bytes.find(did);
+            std::vector<uint8_t> vin_data = (it != did_bytes.end())
+                ? it->second
+                : iso_tp::encode_vin(DEFAULT_VIN);
+
+            std::vector<uint8_t> resp = {
+                SID_READ_DID + POS_RESP_OFFSET,
+                static_cast<uint8_t>(payload[0]),
+                static_cast<uint8_t>(payload[1])
+            };
+            resp.insert(resp.end(), vin_data.begin(), vin_data.end());
+            return {true, resp, 0, "VIN=" + iso_tp::decode_vin(vin_data), {}};
+        }
+
         auto dv = did_values.find(did);
         if (dv == did_values.end()) {
             return make_nr(SID_READ_DID, NRC_REQUEST_OUT_OF_RANGE);
@@ -342,6 +365,15 @@ private:
             return make_nr(SID_SECURITY, NRC_REQUEST_OUT_OF_RANGE);
         }
         return make_nr(SID_SECURITY, NRC_SUB_FUNC_NOT_SUPPORTED);
+    }
+
+    // ── ISO-TP 多帧传输 ──
+    // 将 UDS 响应封装为 ISO-TP 帧序列（用于 >7 字节的响应如 VIN）
+    // 输入：一次 handle_request() 的原始响应
+    // 输出：ISO-TP 帧序列 (SF 或 FF+CFs)
+    std::vector<std::vector<uint8_t>> wrap_iso_tp_response(
+        const std::vector<uint8_t>& uds_response) const {
+        return iso_tp::segment_payload(uds_response);
     }
 };
 
