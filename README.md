@@ -31,7 +31,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Layer 2 的 C++ 节点从 Layer 1 的 Python 模型中移植算法，逐秒输出精确一致（偏差 < 0.1%）。
+Layer 2 的 C++ 节点从 Layer 1 的 Python 模型中移植算法。验证方法参见 [`scripts/compare_py_cpp.py`](scripts/compare_py_cpp.py)：使用与 C++ 节点完全一致的默认参数，Python 模型生成逐秒参考 JSON 输出，在 ROS2 环境中录制 bag 后与 C++ 输出做逐字段对比。C++ 节点内置 [jitter 监控](ros2_ws/src/vehicle_dynamics_node/src/vehicle_dynamics_node.cpp)，可量化实时性偏差。
 
 ---
 

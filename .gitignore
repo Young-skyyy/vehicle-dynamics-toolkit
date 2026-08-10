@@ -19,3 +19,5 @@ Thumbs.db
 .ruff_cache/
 *.coverage
 htmlcov/
+# 防止旧版扁平结构副本混入
+vehicle-dynamics-toolkit/
