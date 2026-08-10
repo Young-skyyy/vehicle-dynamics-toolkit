@@ -17,7 +17,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  Layer 1 — Python Analysis & Simulation                         │
 │  vehicle.py · lateral_dynamics.py · can_demo.py · uds.py        │
-│  211+ pytest cases · GitHub Actions CI (3.10/3.11/3.12 + mypy)  │
+│  243+ pytest cases · GitHub Actions CI (3.10/3.11/3.12 + mypy)  │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 2 — C++ ROS2 Real-Time Nodes                             │
 │  vehicle_dynamics_node (rclcpp, 100 Hz)                         │
@@ -100,7 +100,7 @@ Built on top of the CAN layer, the UDS stack uses standard CAN identifiers (0x7E
 
 A diagnostic protocol stack that models the full ECU session lifecycle.
 
-The Python reference implementation implements the core ISO 14229 services: `DiagnosticSessionControl` (0x10) with session state transitions, `ECUReset` (0x11), `ReadDataByIdentifier` (0x22), `SecurityAccess` (0x27) with seed/key challenge-response, `ReadDTCInformation` (0x19) with DTC status byte decoding per ISO 14229-1 Annex D, and `TesterPresent` (0x3E) with S3 timer handling. A session state machine enforces service permissions — e.g., SecurityAccess is rejected in DefaultSession, and TesterPresent keeps an extended session alive. The C++ ROS2 `uds_server` node runs the same logic for up to 5 ECUs simultaneously, exposing diagnostic endpoints as ROS2 services so test scripts can automate UDS test sequences without real hardware.
+The Python reference implementation implements the core ISO 14229 services: `DiagnosticSessionControl` (0x10) with session state transitions, `ECUReset` (0x11), `ReadDataByIdentifier` (0x22), `SecurityAccess` (0x27) with seed/key challenge-response, `ReadDTCInformation` (0x19) with DTC status byte decoding per ISO 14229-1 Annex D, and `TesterPresent` (0x3E) with S3 timer handling. A session state machine enforces service permissions — e.g., SecurityAccess is rejected in DefaultSession, and TesterPresent keeps an extended session alive. Multi-frame responses (e.g., 17-byte VIN via DID 0xF190) are handled by an **ISO 15765-2 (ISO-TP) transport layer** (`iso_tp.py`) that segments payloads into CAN frames with `FirstFrame` → `FlowControl` → `ConsecutiveFrame` flow, including sequence number validation and overflow detection. The C++ ROS2 `uds_server` node runs the same logic for up to 5 ECUs simultaneously, exposing diagnostic endpoints as ROS2 services so test scripts can automate UDS test sequences without real hardware.
 
 ### 3. Vehicle Lateral Dynamics
 
@@ -168,11 +168,11 @@ python3 src/uds_server/scripts/uds_test_client.py EMS
 
 ## Tests
 
-**211 pytest cases** across 4 test modules, covering:
+**243 pytest cases** across 5 test modules, covering:
 
 - **Vehicle dynamics** — engine torque, wheel force, acceleration (0–100 km/h), braking distance, resistance (SAE J2263 dynamic rolling), power breakdown by source, understeer gradient, characteristic/critical speed, steady-state cornering, step-steer transient response, Pacejka tire model (longitudinal and combined slip)
 - **CAN bus** — signal encode/decode (Motorola + Intel byte order), frame build/parse, multi-ECU simulation, DBC file generation, bus load calculation, overflow detection, edge cases
-- **UDS diagnostics** — DTC status byte, session state machine, ReadDataByIdentifier, ReadDTCInformation, ECUReset, SecurityAccess seed/key, negative response codes (NRC), service permission enforcement
+- **UDS diagnostics** — DTC status byte, session state machine, ReadDataByIdentifier, ReadDTCInformation, ECUReset, SecurityAccess seed/key, negative response codes (NRC), service permission enforcement, ISO-TP multi-frame VIN read
 - **Real-world benchmarks** — validation against Camry, Civic, Tiguan published data
 
 CI runs on GitHub Actions with a Python version matrix (3.10, 3.11, 3.12) plus `mypy` static type checking.
@@ -200,6 +200,7 @@ The ROS2 C++ build is also verified in CI — a separate job on `ubuntu-22.04` c
 │   ├── can_demo.py                # CAN bus multi-ECU simulation, DBC export
 │   ├── can_bus_load_demo.py       # Bus load analysis, overflow detection
 │   ├── uds.py                     # UDS (ISO 14229) diagnostic stack (Python reference)
+│   ├── iso_tp.py                   # ISO 15765-2 multi-frame transport protocol
 │   ├── validation.py              # Real-vehicle benchmark validation + report
 │   ├── plot_dashboard.py          # Multi-panel dashboard
 │   ├── plotting.py                # Visualization utilities
@@ -209,6 +210,7 @@ The ROS2 C++ build is also verified in CI — a separate job on `ubuntu-22.04` c
 │   ├── test_vehicle_dynamics.py   # 109 tests — longitudinal + lateral + benchmarks
 │   ├── test_can_demo.py           # 42 tests — CAN encode/decode, DBC, ECU simulation
 │   ├── test_uds.py                # 31 tests — UDS session, SecurityAccess, DTC
+│   ├── test_iso_tp.py              # 32 tests — ISO-TP frames, receiver, UDS VIN
 │   └── test_can_bus_load.py       # 28 tests — bus load, baud rate, edge cases
 │
 ├── ros2_ws/                       # ROS2 workspace (C++ + Python)
@@ -252,6 +254,7 @@ The `uds_server` node exposes ISO 14229 services (0x10, 0x11, 0x22, 0x27, 0x19, 
 - **CAN frame encoding**: 11-bit arbitration ID, up to 8-byte payload, Motorola (big-endian) and Intel (little-endian) byte order with bit-position-aware packing
 - **UDS session state machine**: enforces ISO 14229-1 service permissions — DefaultSession (0x01), ExtendedDiagnosticSession (0x03), ProgrammingSession (0x02) — with automatic fallback on S3 timeout
 - **SecurityAccess (0x27)**: challenge-response via seed generation + key computation; services behind security gate are rejected with NRC 0x33 until unlocked
+- **ISO 15765-2 (ISO-TP)**: multi-frame transport — SingleFrame (<8 bytes), FirstFrame + ConsecutiveFrame with FlowControl handshake for payloads up to 4095 bytes; sequence number validation with Overflow on mismatch
 
 ---
 

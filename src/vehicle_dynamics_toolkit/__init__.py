@@ -88,4 +88,21 @@ from .uds import (
     print_diagnostic_session,
 )
 
+# ── ISO-TP (ISO 15765-2) ──
+from .iso_tp import (
+    FrameType,
+    FlowControlFlag,
+    IsoTPFrame,
+    parse_frame,
+    build_single_frame,
+    build_first_frame,
+    build_consecutive_frame,
+    build_flow_control,
+    segment_payload,
+    IsoTPReceiver,
+    simulate_transfer,
+    encode_vin,
+    decode_vin,
+)
+
 __version__ = "3.0.0"
