@@ -26,7 +26,7 @@ def setup_chinese_font() -> tuple[bool, str | None]:
     """
     global _HAS_CHINESE_FONT
     if _HAS_CHINESE_FONT is not None:
-        return _HAS_CHINESE_FONT
+        return _HAS_CHINESE_FONT  # type: ignore[return-value]
 
     system = platform.system()
     candidates = _CHINESE_FONT_CANDIDATES.get(system, [])
@@ -52,9 +52,9 @@ def setup_chinese_font() -> tuple[bool, str | None]:
             f"  Linux 用户可执行: sudo apt install fonts-wqy-microhei"
         )
         # 不设字体，matplotlib 用默认英文字体
-        _HAS_CHINESE_FONT = (False, None)
+        _HAS_CHINESE_FONT = (False, None)  # type: ignore[assignment]
 
-    return _HAS_CHINESE_FONT
+    return _HAS_CHINESE_FONT  # type: ignore[return-value]
 
 
 def get_label(key: str) -> str:
