@@ -1,0 +1,13 @@
+# UDS (ISO 14229) 诊断请求
+string ecu_name                  # "EMS" / "BMS" / "ABS" / "TCU" / "BCM"
+uint8 service_id                 # 0x10=Session, 0x11=Reset, 0x22=ReadDID, 0x27=Security, 0x19=ReadDTC, 0x3E=TesterPresent
+uint8 sub_function               # 0x01/0x02/0x03 for 0x10; 0x01/0x02 for 0x27; 0x02/0x0A for 0x19
+uint8[] data                     # 额外数据 (DID bytes, DTC mask, key bytes, etc.)
+bool suppress_response           # Suppress Positive Response (bit7 of sub_function)
+---
+# UDS 诊断响应
+bool success                     # true=正响应, false=负响应(NRC)
+uint8[] response_data            # 正响应: 原始响应字节 (不含 SID); 负响应: 空
+uint8 nrc                        # 负响应码 (仅 success=false 时有效)
+string message                   # 人类可读描述
+string[] dtc_list                # DTC 列表 (仅 0x19 查询时填充)
