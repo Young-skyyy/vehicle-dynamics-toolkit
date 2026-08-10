@@ -1,17 +1,20 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>vehicle_dynamics_node</name>
-  <version>0.4.0</version>
-  <description>C++ 车辆动力学仿真节点：纵向 + 横向 + 换挡 + Pacejka</description>
+  <name>vehicle_msgs</name>
+  <version>0.0.0</version>
+  <description>自定义车辆仿真消息：VehicleState + VehicleControl</description>
   <maintainer email="young-skyyy@users.noreply.github.com">mnq</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <depend>rclcpp</depend>
   <depend>std_msgs</depend>
-  <depend>vehicle_msgs</depend>
+  <depend>rosidl_default_generators</depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
