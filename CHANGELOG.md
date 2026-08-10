@@ -1,18 +1,26 @@
 # Changelog
 
-## [0.4.0] — 2026-08-09
+## [0.4.0] — 2026-08-10
 
 ### 新增
 
 - **ROS2 集成** (`ros2_ws/`)
-  - `vehicle_dynamics_node`: 纯纵向动力学 ROS2 节点，100Hz 仿真闭环
-    - 订阅 `/vehicle/throttle` + `/vehicle/brake`，发布 `/vehicle/velocity`、`/vehicle/position`、`/vehicle/accel`、`/vehicle/engine_rpm`
-    - 发动机外特性扭矩曲线（归一化 + 峰值扭矩缩放）、行驶阻力（滚动 + 空气阻力）、怠速蠕行
-    - 全参数化：mass、max_torque、cd、frontal_area、rolling_coeff、wheel_radius、gear_ratio 均可通过 ROS2 parameter 配置
-  - `throttle_pub`: 恒定油门指令节点，用于测试闭环
-  - `vehicle_sim.launch.py`: launch 文件一键启动仿真
-  - 构建系统：colcon + ament_python，纯 Python（rclpy + std_msgs）
-- **WSL2 部署指南**：Ubuntu 22.04 + ROS2 Humble 环境搭建（DNS 修复、ROS2 安装脚本）
+  - **C++ 车辆动力学节点** (`vehicle_dynamics_node`): rclcpp 生产级实时仿真，100Hz
+    - 纵向模型：发动机外特性扭矩曲线插值 + 5 速自动换挡（目标转速 2000RPM）+ SAE J2263 行驶阻力
+    - 横向模型：自行车模型（2-DOF）+ 线性/Pacejka 轮胎 + 横摆角速度 + 侧向位移
+    - 发布 `VehicleState`（vx/vy/ax/ay/yaw_rate/gear/engine_rpm/steer_angle 等 14 字段）
+    - 订阅 `VehicleControl`（throttle/brake/steer_angle），兼容旧 `Float64` throttle 接口
+    - 15 个 ROS2 parameter 全可配置
+  - **自定义消息** (`vehicle_msgs`): ROS2 IDL → C++ / Python 双语言
+    - `VehicleState.msg`: 14 字段完整车辆状态
+    - `VehicleControl.msg`: 油门 + 制动 + 转向
+  - **控制指令节点** (`control_pub`): Python 驱动仿真闭环
+  - 构建系统：ament_cmake (C++) + rosidl (IDL 消息生成)
+- **WSL2 部署**：Ubuntu 22.04 + ROS2 Humble 完整环境
+
+### 验证 (10s 50% 油门直行)
+- 车速 29.1 m/s (105 km/h)，档位 5，RPM 2749
+- 横向集成就绪（steer_angle=0 时 vy=0, yaw_rate=0）
 
 ## [0.3.0] — 2026-07-31
 
