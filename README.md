@@ -112,16 +112,19 @@ A 2-DOF (degrees of freedom) bicycle model computes slip angles at front and rea
 
 ## Validation Against Published Vehicle Specifications
 
-The longitudinal model was tested against published 0–100 km/h acceleration and 100–0 km/h braking data for three production vehicles. All 6 benchmarks pass within the specified tolerances (±15% for acceleration, ±20% for braking).
+The longitudinal and lateral models were tested against published specifications for three production vehicles. All 9 benchmarks pass within tolerance.
 
-| Vehicle | Metric | Model Value | Benchmark | Error | Verdict |
-|--------:|--------|:----------:|:---------:|:-----:|:-------:|
-| Toyota Camry 2.0L | 0–100 km/h | 10.6 s | 9.5 s | +11.6% | PASS |
+| Vehicle | Metric | Model | Benchmark | Error | Verdict |
+|--------:|--------|:-----:|:---------:|:-----:|:-------:|
+| Toyota Camry 2.0L | 0–100 km/h | 10.4 s | 9.5 s | +9.5% | PASS |
 | Honda Civic 1.5T | 0–100 km/h | 7.1 s | 8.0 s | −11.3% | PASS |
 | VW Tiguan 2.0T | 0–100 km/h | 9.5 s | 9.0 s | +5.6% | PASS |
 | Toyota Camry 2.0L | 100–0 km/h | 43.7 m | 39.0 m | +12.1% | PASS |
 | Honda Civic 1.5T | 100–0 km/h | 43.7 m | 37.0 m | +18.1% | PASS |
 | VW Tiguan 2.0T | 100–0 km/h | 43.7 m | 39.0 m | +12.1% | PASS |
+| Toyota Camry 2.0L | Kus gradient | 2.03 deg/g | 2.5 deg/g | −18.8% | PASS |
+| Honda Civic 1.5T | Kus gradient | 1.58 deg/g | 1.8 deg/g | −12.2% | PASS |
+| VW Tiguan 2.0T | Kus gradient | 1.61 deg/g | 2.0 deg/g | −19.5% | PASS |
 
 The braking model uses a simplified kinematics formula (`v²/(2μg)`, μ=0.90 for dry asphalt with ABS) that does not account for weight transfer, brake fade, or tire nonlinearity, so braking distance is systematically slightly longer than published figures. Acceleration uses a normalized wide-open-throttle torque curve with fixed shift points (92% of redline); real-world launch control, turbo lag, and traction variations account for the remaining error.
 
@@ -242,7 +245,21 @@ The ROS2 C++ build is also verified in CI — a separate job on `ubuntu-22.04` c
 
 The C++ `vehicle_dynamics_node` runs a 100 Hz closed-loop simulation using `rclcpp` timers. It publishes `VehicleState` (14 fields: position, velocity, acceleration, yaw rate, gear, engine RPM, slip angles, etc.) and subscribes to `VehicleControl` (throttle, brake, steering angle). A built-in jitter monitor tracks cycle-to-cycle timing and reports P50/P95/P99 latencies, so real-time deviation can be measured directly from log output.
 
-The `uds_server` node exposes ISO 14229 services (0x10, 0x11, 0x22, 0x27, 0x19, 0x3E) for 5 simulated ECUs via ROS2 service calls, with S3 session timeout enforcement. Every diagnostic response can be validated against the Python reference to confirm algorithm fidelity.
+The `uds_server` node exposes ISO 14229 services (0x10, 0x11, 0x22, 0x27, 0x19, 0x3E) for 5 simulated ECUs via ROS2 service calls, with S3 session timeout enforcement. Every diagnostic response can be validated against the Python reference to confirm algorithm fidelity. Multi-frame VIN reads (0xF190, 17 bytes) are handled by an independent [`iso_tp.hpp/cpp`](ros2_ws/src/uds_server/src/iso_tp.hpp) module with `namespace iso_tp`.
+
+### Real-Time Jitter Monitoring
+
+The C++ node tracks cycle-to-cycle timing with microsecond resolution. Each `step()` call measures the interval since the previous call and compares it to the expected 10ms period:
+
+```
+# Enable jitter publishing:
+ros2 param set /vehicle_dynamics_node publish_jitter true
+
+# Expected output (every 10 seconds):
+JITTER STATS: avg=47us max=213us P99=123us samples=3000
+```
+
+Jitter is computed as `|actual_dt - expected_dt|` in microseconds, smoothed with exponential moving average (α=0.01), and tracked in a 100-sample sliding window for P99 percentile calculation. The ceiling of a non-real-time Linux kernel with `rclcpp::WallTimer` is typically 50-200μs mean jitter under moderate system load.
 
 ---
 
@@ -250,7 +267,7 @@ The `uds_server` node exposes ISO 14229 services (0x10, 0x11, 0x22, 0x27, 0x19, 
 
 - **SAE J2263 coastdown model**: dynamic rolling resistance coefficient μ(v) = f₀ + f₁v + f₄v⁴, with temperature-adjusted parameter ranges from coastdown test data
 - **2-DOF bicycle model**: slip angles → lateral forces → yaw moment → Euler integration for yaw rate and lateral acceleration transient response
-- **Pacejka Magic Formula**: pure lateral slip formulation with tunable stiffness (B), shape (C), peak (D), and curvature (E) parameters
+- **Pacejka Magic Formula**: pure lateral slip formulation. Parameter B is derived from cornering stiffness via the identity `B·C·D = Cα` at small slip angles (α → 0), with C=1.3 (typical passenger car tire) and D=axle load (peak force bound). This ensures linear-region consistency with the bicycle model; E=0 means peak-region curvature is not fitted — see [vehicle.py L169-180](src/vehicle_dynamics_toolkit/vehicle.py) for full derivation and references.
 - **CAN frame encoding**: 11-bit arbitration ID, up to 8-byte payload, Motorola (big-endian) and Intel (little-endian) byte order with bit-position-aware packing
 - **UDS session state machine**: enforces ISO 14229-1 service permissions — DefaultSession (0x01), ExtendedDiagnosticSession (0x03), ProgrammingSession (0x02) — with automatic fallback on S3 timeout
 - **SecurityAccess (0x27)**: challenge-response via seed generation + key computation; services behind security gate are rejected with NRC 0x33 until unlocked

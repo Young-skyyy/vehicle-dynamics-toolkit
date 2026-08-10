@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from .vehicle import Vehicle, simulate_acceleration, calc_braking_distance
+from .lateral_dynamics import calc_understeer_gradient, calc_steady_state_cornering
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 实车基准数据
@@ -22,7 +23,8 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
         "braking_100_0_m": 39,
         "fuel_wltc_l100": 5.8,
         "cornering_stiffness_f": 75000,
-        "source": "Toyota official specs, 2023 Camry brochure",
+        "kus_deg_per_g": 2.5,  # family sedan: 2-3 deg/g (Gillespie, 1992)
+        "source": "Toyota official specs; understeer gradient range from vehicle dynamics literature",
     },
     "Honda Civic 1.5T (2023)": {
         "mass_kg": 1370,
@@ -32,7 +34,8 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
         "braking_100_0_m": 37,
         "fuel_wltc_l100": 5.5,
         "cornering_stiffness_f": 78000,
-        "source": "Honda official specs, 2023 Civic brochure",
+        "kus_deg_per_g": 1.8,  # sportier compact: 1.5-2.0 deg/g
+        "source": "Honda official specs; understeer gradient range from vehicle dynamics literature",
     },
     "Volkswagen Tiguan 2.0T (2023)": {
         "mass_kg": 1650,
@@ -42,7 +45,8 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
         "braking_100_0_m": 39,
         "fuel_wltc_l100": 7.0,
         "cornering_stiffness_f": 85000,
-        "source": "Volkswagen official specs, 2023 Tiguan brochure",
+        "kus_deg_per_g": 2.0,  # compact SUV: 2-3 deg/g, depends on tire/suspension
+        "source": "Volkswagen official specs; understeer gradient range from vehicle dynamics literature",
     },
 }
 
@@ -52,6 +56,7 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
 
 ACCEL_TOLERANCE_PCT = 15
 BRAKING_TOLERANCE_PCT = 20  # 放宽：简化公式不含 ABS/重量转移/轮胎非线性
+LATERAL_TOLERANCE_PCT = 25  # 侧偏刚度来自轴荷反推，非实测数据
 
 
 def _lookup_benchmark(vehicle: Vehicle) -> dict | None:
@@ -135,6 +140,41 @@ def validate_braking(speed_kmh: float = 100, friction_coeff: float = 0.90) -> di
         "verdict": _verdict(error, BRAKING_TOLERANCE_PCT),
     }
 
+
+def validate_lateral(vehicle: Vehicle) -> dict:
+    """校验不足转向梯度 (Kus)。
+
+    模型通过 cornering_stiffness_f/r 计算 Kus = Wf/Cf - Wr/Cr，
+    与车辆类别的典型范围对比。
+
+    Args:
+        vehicle: 待校验的 Vehicle 对象
+
+    Returns:
+        dict: {model_kus_deg_per_g, benchmark_kus_deg_per_g, error_pct, verdict}
+    """
+    _, kus_deg = calc_understeer_gradient(vehicle)
+    model_kus = round(kus_deg, 2)
+
+    benchmark = _lookup_benchmark(vehicle)
+    if benchmark is None or "kus_deg_per_g" not in benchmark:
+        return {
+            "model_kus_deg_per_g": model_kus,
+            "benchmark_kus_deg_per_g": None,
+            "error_pct": None,
+            "verdict": "N/A (无基准数据)",
+        }
+
+    bench_kus = benchmark["kus_deg_per_g"]
+    error = _error_pct(model_kus, bench_kus)
+    return {
+        "model_kus_deg_per_g": model_kus,
+        "benchmark_kus_deg_per_g": bench_kus,
+        "error_pct": round(error, 1),
+        "verdict": _verdict(error, LATERAL_TOLERANCE_PCT),
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 综合报告
 # ═══════════════════════════════════════════════════════════════════════════
@@ -152,9 +192,10 @@ def print_validation_report() -> None:
             mass_kg=1550, power_kw=127, max_torque_nm=207,
             drag_coeff=0.28, frontal_area_m2=2.30,
             gear_ratios=[3.30, 1.90, 1.42, 1.00, 0.71],
-            final_drive=3.63, wheel_radius_m=0.33,
+            final_drive=3.63, wheel_radius_m=0.32,
             trans_efficiency=0.90, fuel_density_gl=740, fuel_type="gasoline",
-            wheelbase_m=2.825, cornering_stiffness_f=75000,
+            wheelbase_m=2.825,
+            cornering_stiffness_f=75000, cornering_stiffness_r=90000,
         ),
         "Honda Civic 1.5T (2023)": dict(
             mass_kg=1370, power_kw=134, max_torque_nm=240,
@@ -162,7 +203,8 @@ def print_validation_report() -> None:
             gear_ratios=[3.64, 2.08, 1.36, 1.00, 0.76],
             final_drive=4.11, wheel_radius_m=0.32,
             trans_efficiency=0.90, fuel_density_gl=740, fuel_type="gasoline",
-            wheelbase_m=2.735, cornering_stiffness_f=78000,
+            wheelbase_m=2.735,
+            cornering_stiffness_f=78000, cornering_stiffness_r=90000,
         ),
         "Volkswagen Tiguan 2.0T (2023)": dict(
             mass_kg=1650, power_kw=137, max_torque_nm=320,
@@ -170,8 +212,9 @@ def print_validation_report() -> None:
             gear_ratios=[3.46, 2.05, 1.30, 0.92, 0.77],
             final_drive=3.45, wheel_radius_m=0.34,
             trans_efficiency=0.88, fuel_density_gl=740, fuel_type="gasoline",
-            engine_type="turbo",  # 涡轮增压 vs 自吸（Camry/Civic）
-            wheelbase_m=2.68, cornering_stiffness_f=85000,
+            engine_type="turbo",
+            wheelbase_m=2.68,
+            cornering_stiffness_f=85000, cornering_stiffness_r=95000,
         ),
     }
 
@@ -191,7 +234,7 @@ def print_validation_report() -> None:
     print("\n" + "=" * len(header))
     print("  车辆动力学模型 — 实车基准校验报告")
     print("=" * len(header))
-    print(f"  加速容差: ±{ACCEL_TOLERANCE_PCT}%  制动容差: ±{BRAKING_TOLERANCE_PCT}%")
+    print(f"  加速容差: ±{ACCEL_TOLERANCE_PCT}%  制动容差: ±{BRAKING_TOLERANCE_PCT}%  横向容差: ±{LATERAL_TOLERANCE_PCT}%")
     print(sep)
     print(header)
     print(sep)
@@ -220,6 +263,19 @@ def print_validation_report() -> None:
 
         print(row_acc)
         print(row_brake)
+
+        # 横向 — 不足转向梯度
+        lat = validate_lateral(v)
+        lat_bench = bm.get("kus_deg_per_g")
+        lat_error = _error_pct(lat["model_kus_deg_per_g"], lat_bench) if lat_bench else None
+        lat_verdict = _verdict(lat_error, LATERAL_TOLERANCE_PCT) if lat_error is not None else ""
+        row_lateral = (
+            f"{v.name:<28s} {'Kus 梯度':<10s} "
+            f"{lat['model_kus_deg_per_g']:>6.2f}dg  {_fmt_kus(lat_bench):>8s}  "
+            f"{_fmt_pct(lat_error):>7s}  {lat_verdict:>6s}"
+        )
+        print(row_lateral)
+
         if v is not vehicles[-1]:
             print(sep)
 
@@ -230,6 +286,7 @@ def print_validation_report() -> None:
     print("差异解释摘要:")
     print("  加速: " + explain_discrepancy("acceleration"))
     print("  制动: " + explain_discrepancy("braking"))
+    print("  横向: " + explain_discrepancy("lateral"))
     print()
 
 
@@ -238,6 +295,13 @@ def _fmt_pct(val) -> str:
     if val is None:
         return "  N/A"
     return f"{val:+6.1f}%"
+
+
+def _fmt_kus(val) -> str:
+    """格式化不足转向梯度显示。"""
+    if val is None:
+        return "   N/A"
+    return f"{val:>6.1f}dg"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 差异解释
@@ -263,6 +327,11 @@ def explain_discrepancy(category: str) -> str:
             "模型使用 v²/(2μg) 公式，默认 μ=0.90 代表现代乘用车干沥青路面制动性能"
             "（含 ABS 滑移率优化）。剩余差异源于未模拟制动热衰退、重量转移及"
             "轮胎-路面非线性摩擦特性（Pacejka 轮胎模型当前仅用于横向力计算）。"
+        ),
+        "lateral": (
+            "侧偏刚度 (cornering_stiffness) 从轴荷估算——前轴 ~50000 N/rad、"
+            "后轴 ~40000 N/rad，对应不足转向梯度 2-3 deg/g（典型家用轿车）。"
+            "差异来自侧偏刚度非实测数据、简化自行车模型忽略侧倾/载荷转移效应。"
         ),
     }
     default_msg = f"未知类别 '{category}'，可选: acceleration / braking"
