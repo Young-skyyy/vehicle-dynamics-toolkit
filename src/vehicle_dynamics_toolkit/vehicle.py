@@ -167,7 +167,17 @@ class Vehicle:
         # 横摆转动惯量（kg·m²），估算公式 Iz ≈ m × a × b
         self.yaw_inertia: float = yaw_inertia or self.mass * self.cg_to_front * self.cg_to_rear
         # ---- Pacejka 魔术公式轮胎参数 ----
-        # D = 峰值侧向力 ≈ 轴荷 (N/rad)；B·C·D = cornering_stiffness，确保小侧偏角时与线性模型一致
+        # 参数推导方法：
+        #   小侧偏角时 dFy/dα = B·C·D（Pacejka 线性区斜率）。
+        #   令其等于 cornering_stiffness（线性侧偏刚度），得 B = Cα / (C·D)。
+        #   C 取 1.3（乘用车轮胎典型值），D 取轴荷（峰值侧向力的物理上界）。
+        #   例如：Cα=80000, C=1.3, D=_Wf_axle≈8360 → B=80000/(1.3×8360)=7.36
+        #   此方法保证小侧偏角区与线性轮胎模型一致，但 E=0 意味着未拟合
+        #   大侧偏角区曲率——牺牲了峰值区域的精度。若需精确拟合，需轮胎台架
+        #   测试数据（FSAE TTC dataset）通过最小二乘求 B/C/D/E 四参数。
+        # 参考:
+        #   Pacejka, H.B. (2006). Tyre and Vehicle Dynamics, 2nd ed. §4.3
+        #   Gillespie, T.D. (1992). Fundamentals of Vehicle Dynamics. SAE, Ch.2
         # 估计前后轴荷
         _Wf_axle = self.mass * G * self.cg_to_rear / self.wheelbase
         _Wr_axle = self.mass * G * self.cg_to_front / self.wheelbase
