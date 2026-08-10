@@ -14,7 +14,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(vehicle_msgs REQUIRED)
 
-add_executable(uds_server_node src/uds_server_node.cpp)
+add_executable(uds_server_node src/uds_server_node.cpp src/iso_tp.cpp)
 ament_target_dependencies(uds_server_node rclcpp vehicle_msgs)
 
 install(TARGETS uds_server_node
