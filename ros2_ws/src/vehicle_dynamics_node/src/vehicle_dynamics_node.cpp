@@ -101,6 +101,15 @@ public:
         timer_ = this->create_wall_timer(period,
             std::bind(&VehicleDynamicsNode::step, this));
 
+        // ── Timer: 每秒打印诊断信息 ──
+        diag_timer_ = this->create_wall_timer(1s,
+            [this]() {
+                RCLCPP_INFO(this->get_logger(),
+                    "t=%.0fs vx=%.3f ax=%.3f gear=%d rpm=%.0f Tq=%.1f pos=%.1f",
+                    step_count_ * dt_, vx_, ax_, gear_, engine_rpm_,
+                    engine_torque(engine_rpm_), position_x_);
+            });
+
         RCLCPP_INFO(this->get_logger(), "VehicleDynamicsNode (C++) started @ %.0f Hz", 1.0/dt_);
     }
 
@@ -139,6 +148,8 @@ private:
     rclcpp::Subscription<VehicleControl>::SharedPtr control_sub_;
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr throttle_sub_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr diag_timer_;
+    uint64_t step_count_ = 0;
 
     // ═══════════════════════════════════════
     // 构建发动机外特性扭矩曲线
@@ -308,6 +319,8 @@ private:
         msg.brake = brake_;
 
         state_pub_->publish(msg);
+
+        step_count_++;
     }
 
     // ═══════════════════════════════════════
