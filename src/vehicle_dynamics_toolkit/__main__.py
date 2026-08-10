@@ -4,11 +4,9 @@ from .vehicle import (
     car_sedan, car_suv, car_truck,
     simulate_acceleration, calc_braking_table, calc_power_breakdown,
 )
-from .bsfc import calc_fuel_table
 from .lateral_dynamics import (
     analyze_lateral, calc_steady_cornering_table, calc_step_steer_response,
 )
-from .plot_dashboard import plot_dashboard
 
 
 def main():
@@ -26,9 +24,6 @@ def main():
     braking_data = calc_braking_table()
     print(f"\n  制动距离表 (120km/h): 反应 {braking_data[-1]['reaction_dist_m']:.1f}m + 制动 {braking_data[-1]['braking_dist_m']:.1f}m")
 
-    fuel_data = calc_fuel_table()
-    print(f"\n  油耗分析: {len(fuel_data)} 个工况点")
-
     for car, speed, grade in [
         (car_sedan, 100, 5), (car_suv, 100, 5), (car_truck, 80, 3),
     ]:
@@ -45,10 +40,6 @@ def main():
 
     steer = calc_step_steer_response(car_sedan, vx_kmh=80, steer_deg=3)
     print(f"  阶跃转向终值: r={steer['final_yaw_rate']:.2f} deg/s")
-
-    # ── 可视化 ──
-    plot_dashboard(car_sedan)
-    print("\n  ✓ 仪表盘已生成")
 
 
 if __name__ == "__main__":
