@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """Pytest unit tests for UDS diagnostic protocol module"""
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 import pytest
-from uds import (
+from vehicle_dynamics_toolkit.uds import (
     UDSSID,
     NRC,
     DTCStatusMask,

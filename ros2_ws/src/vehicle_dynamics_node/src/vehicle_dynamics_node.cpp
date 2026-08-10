@@ -58,6 +58,7 @@ public:
         this->declare_parameter("cornering_stiffness_r", 70000.0);  // N/rad
         this->declare_parameter("idle_rpm", 800.0);        // 怠速
         this->declare_parameter("max_rpm", 6200.0);        // 红线
+        this->declare_parameter("publish_jitter", false);
 
         dt_ = this->get_parameter("dt").as_double();
         mass_ = this->get_parameter("mass").as_double();
@@ -96,6 +97,9 @@ public:
                 throttle_ = std::clamp(msg->data, 0.0, 1.0);
             });
 
+        // ── Publisher: Jitter 统计 ──
+        jitter_pub_ = this->create_publisher<std_msgs::msg::Float64>("/vehicle/jitter_us", 10);
+
         // ── Timer: 主仿真循环 ──
         auto period = std::chrono::duration<double>(dt_);
         timer_ = this->create_wall_timer(period,
@@ -105,12 +109,30 @@ public:
         diag_timer_ = this->create_wall_timer(1s,
             [this]() {
                 RCLCPP_INFO(this->get_logger(),
-                    "t=%.0fs vx=%.3f ax=%.3f gear=%d rpm=%.0f Tq=%.1f pos=%.1f",
+                    "t=%.0fs vx=%.3f ax=%.3f gear=%d rpm=%.0f Tq=%.1f pos=%.1f jitter=%.1fus",
                     step_count_ * dt_, vx_, ax_, gear_, engine_rpm_,
-                    engine_torque(engine_rpm_), position_x_);
+                    engine_torque(engine_rpm_), position_x_, jitter_avg_us_);
+
+                if (this->get_parameter("publish_jitter").as_bool() && jitter_sample_count_ > 0) {
+                    auto jitter_msg = std_msgs::msg::Float64();
+                    jitter_msg.data = jitter_avg_us_;
+                    jitter_pub_->publish(jitter_msg);
+                }
+
+                if (step_count_ % 1000 == 0 && jitter_sample_count_ > 0) {  // every 10s
+                    int valid_samples = std::min(100, (int)jitter_sample_count_);
+                    std::vector<double> sorted(jitter_window_, jitter_window_ + valid_samples);
+                    std::sort(sorted.begin(), sorted.end());
+                    double p99 = sorted[(int)(valid_samples * 0.99)];
+
+                    RCLCPP_INFO(this->get_logger(),
+                        "JITTER STATS: avg=%.1fus max=%.1fus P99=%.1fus samples=%lu",
+                        jitter_avg_us_, jitter_max_us_, p99, jitter_sample_count_);
+                }
             });
 
-        RCLCPP_INFO(this->get_logger(), "VehicleDynamicsNode (C++) started @ %.0f Hz", 1.0/dt_);
+        RCLCPP_INFO(this->get_logger(), "VehicleDynamicsNode (C++) started @ %.0f Hz (jitter monitoring: %s)",
+            1.0/dt_, this->get_parameter("publish_jitter").as_bool() ? "ON" : "OFF");
     }
 
 private:
@@ -149,7 +171,17 @@ private:
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr throttle_sub_;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::TimerBase::SharedPtr diag_timer_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr jitter_pub_;
     uint64_t step_count_ = 0;
+
+    // Jitter monitoring
+    double last_step_time_ = 0.0;           // 上次 step() 时间戳
+    int64_t last_step_time_ns_ = 0;
+    double jitter_max_us_ = 0.0;            // 最大 jitter (us)
+    double jitter_avg_us_ = 0.0;            // 平均 jitter (us)
+    uint64_t jitter_sample_count_ = 0;      // 采样计数
+    double jitter_window_[100] = {0};       // 最近 100 次 jitter
+    int jitter_window_idx_ = 0;
 
     // ═══════════════════════════════════════
     // 构建发动机外特性扭矩曲线
@@ -263,6 +295,24 @@ private:
     // 主仿真步进
     // ═══════════════════════════════════════
     void step() {
+        // ── Jitter 计时 ──
+        auto now = this->now();
+        if (last_step_time_ns_ > 0) {
+            double expected_dt = dt_;  // seconds
+            double actual_dt = (now.nanoseconds() - last_step_time_ns_) * 1e-9;
+            double jitter_us = std::abs(actual_dt - expected_dt) * 1e6;
+
+            // 指数移动平均
+            jitter_avg_us_ = 0.99 * jitter_avg_us_ + 0.01 * jitter_us;
+            if (jitter_us > jitter_max_us_) jitter_max_us_ = jitter_us;
+
+            // 滑动窗口
+            jitter_window_[jitter_window_idx_ % 100] = jitter_us;
+            jitter_window_idx_++;
+            jitter_sample_count_++;
+        }
+        last_step_time_ns_ = now.nanoseconds();
+
         // ── 换挡 ──
         gear_ = select_gear(vx_);
         double current_ratio = (gear_ >= 1) ? gear_ratios_[gear_ - 1] : gear_ratios_[0];

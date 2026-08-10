@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.0.0] — 2026-08-10
+
+### 重大变更
+
+- **Python 包重构**：从扁平文件结构迁移到 `src/vehicle_dynamics_toolkit/` 命名空间包
+  - `_constants.py` 合并到 `vehicle.py`，消除单文件双常量的反模式
+  - 所有模块 import 改为相对导入 (`from .vehicle import ...`)
+  - 新增 `__init__.py` 导出完整公共 API
+  - 新增 `__main__.py` 支持 `python -m vehicle_dynamics_toolkit` 入口
+  - `pyproject.toml` 配置 `setuptools.packages.find` + `[project.scripts]` entry point
+- **测试迁移**：测试文件从根目录迁移到 `tests/` 目录，240 条测试全部通过
+- **`vehicle_dynamics.py` 移除**：根目录 god module 被 `__main__.py` 替代
+
+### 新增
+
+- **实车基准校验** (`validation.py`)
+  - 3 款实车对标数据（Camry 2.0L / Civic 1.5T / Tiguan 2.0T），均标注来源
+  - `validate_acceleration()` / `validate_braking()` / `validate_fuel_consumption()` 校验函数
+  - `print_validation_report()` 格式化对比表格 + `explain_discrepancy()` 差异归因
+- **RK4 积分器** (`lateral_dynamics.py`)
+  - `simulate_step_steer()` 新增 `method="euler"|"rk4"` 参数
+  - `compare_integrators.py` 验证脚本：dt=0.01 时两者稳态偏差均 <0.002%
+- **C++ jitter 监控** (`vehicle_dynamics_node.cpp`)
+  - 每次 `step()` 测量实际间隔 vs 期望 dt，输出 jitter (μs)
+  - 指数移动平均 + 滑动窗口 P99 统计，每秒日志 + 每 10 秒完整报告
+  - 可选 ROS2 发布到 `/vehicle/jitter_us` topic（`publish_jitter` 参数）
+
+### CI 升级
+
+- 新增 `generate-ref` job：生成 Python 参考输出并上传 artifact
+- 新增 `ros2-build` job：在 ubuntu-22.04 + ROS2 Humble 上编译 C++ 包
+- Python 测试改为 `pip install -e ".[test]"` + `pytest tests/ -v`
+- mypy 类型检查目标从根目录改为 `src/vehicle_dynamics_toolkit/`
+
 ## [0.4.0] — 2026-08-10
 
 ### 新增

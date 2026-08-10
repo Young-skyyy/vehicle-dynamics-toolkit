@@ -1,13 +1,38 @@
 # -*- coding: utf-8 -*-
 """
 车辆基本参数 + 行驶阻力 + 加速/制动/跟车
+包含物理常量（原 _constants.py 已合并）
 """
 
 from __future__ import annotations
 
 import math
 
-from _constants import G, RHO_AIR, KMH_TO_MS, MS_TO_KMH, DEFAULT_ROLLING_COEFF, DEFAULT_CG_FRONT_RATIO
+# ═══════════════════════════════════════════════════
+# 物理常量
+# ═══════════════════════════════════════════════════
+
+# 重力加速度 (m/s²)
+G = 9.8
+
+# 海平面标准空气密度 (kg/m³)
+RHO_AIR = 1.225
+
+# km/h ↔ m/s 转换系数
+KMH_TO_MS = 1.0 / 3.6
+MS_TO_KMH = 3.6
+
+# 默认滚动阻力系数（常量模型）
+DEFAULT_ROLLING_COEFF = 0.015
+
+# 每小时的秒数
+SECONDS_PER_HOUR = 3600
+
+# 每分钟的秒数
+SECONDS_PER_MINUTE = 60
+
+# 默认质心到前轴距离占轴距的比例（45%，典型前置前驱轿车）
+DEFAULT_CG_FRONT_RATIO = 0.45
 
 
 # ---- 发动机外特性扭矩曲线 ----

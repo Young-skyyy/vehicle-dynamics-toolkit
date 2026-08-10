@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import math
 
-from _constants import G, KMH_TO_MS, MS_TO_KMH, SECONDS_PER_HOUR, SECONDS_PER_MINUTE
-from vehicle import Vehicle, calc_resistance, get_engine_torque
-from bsfc import _interpolate_bsfc, _calc_l100_raw, calc_fuel_consumption
+from .vehicle import G, KMH_TO_MS, MS_TO_KMH, SECONDS_PER_HOUR, SECONDS_PER_MINUTE
+from .vehicle import Vehicle, calc_resistance, get_engine_torque
+from .bsfc import _interpolate_bsfc, _calc_l100_raw, calc_fuel_consumption
 
 
 # WLTC Class 3 关键拐点，线性插值生成 1Hz 速度曲线

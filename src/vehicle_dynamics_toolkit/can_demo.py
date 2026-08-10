@@ -10,8 +10,8 @@ import random
 import struct
 from datetime import datetime
 
-from uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
-from can_bus_load_demo import frame_bits as calc_frame_bits
+from .uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
+from .can_bus_load_demo import frame_bits as calc_frame_bits
 
 
 # 1. CAN 帧定义
