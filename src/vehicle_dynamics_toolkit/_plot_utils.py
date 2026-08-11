@@ -16,7 +16,7 @@ _CHINESE_FONT_CANDIDATES = {
                 "Droid Sans Fallback", "AR PL UMing CN"],
 }
 
-_HAS_CHINESE_FONT = None
+_HAS_CHINESE_FONT: tuple[bool, str | None] | None = None
 
 
 def setup_chinese_font() -> tuple[bool, str | None]:

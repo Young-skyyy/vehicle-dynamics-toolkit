@@ -187,7 +187,7 @@ def print_validation_report() -> None:
 
     vehicles: list[Vehicle] = []
     for name, spec in _vehicle_specs.items():
-        v = Vehicle(name=name, **spec)
+        v = Vehicle(name=name, **spec)  # type: ignore[arg-type]
         vehicles.append(v)
 
     # ── 表头 ──
