@@ -378,16 +378,55 @@ def simulate_acceleration(vehicle: Vehicle, target_speed_kmh: float = 100,
     }
 
 
+def _simulate_braking(vehicle: Vehicle, v0_ms: float, mu: float,
+                     dt: float = 0.01) -> float:
+    """时间步进法仿真制动过程，考虑整车质量、风阻与滚动阻力。
+
+    总减速度 = μ·g（制动） + F_resist/m（风阻+滚阻），
+    使用欧拉积分逐步减速到 0，累积制动距离。
+
+    Args:
+        vehicle: Vehicle 对象（取其 mass, cd, area, rolling_coeff）
+        v0_ms:   制动初速度 (m/s)
+        mu:      轮胎-路面摩擦系数（含 ABS 滑移率优化）
+        dt:      积分步长 (s)
+
+    Returns:
+        纯制动距离 (m)，不含反应距离
+    """
+    v = v0_ms
+    dist = 0.0
+    while v > 0:
+        F_brake = mu * vehicle.mass * G
+        F_resist = calc_resistance(vehicle, v)
+        a = (F_brake + F_resist) / vehicle.mass  # 总减速度 (正值, m/s²)
+        dv = a * dt
+        if dv >= v:
+            dist += v * v / (2 * a)  # 最后一段 v²/(2a)
+            break
+        dist += v * dt - 0.5 * a * dt * dt
+        v -= dv
+    return dist
+
+
 def calc_braking_distance(speed_kmh: float, friction_coeff: float = 0.7,
-                          reaction_time: float = 1.5) -> tuple[float, float, float]:
-    """计算制动总距离 = 反应距离 + 制动距离"""
+                          reaction_time: float = 1.5,
+                          vehicle: Vehicle | None = None) -> tuple[float, float, float]:
+    """计算制动总距离 = 反应距离 + 制动距离。
+
+    vehicle=None 时使用简化 v²/(2μg) 公式（向后兼容）；
+    传入 Vehicle 时使用时间步进法，考虑车重、风阻、滚动阻力。
+    """
     speed_ms = speed_kmh * KMH_TO_MS
 
     # 反应距离 = 速度 × 反应时间
     reaction_dist = speed_ms * reaction_time
 
-    # 制动距离 = v² / (2 × μ × g)
-    braking_dist = speed_ms ** 2 / (2 * friction_coeff * G)
+    # 制动距离
+    if vehicle is not None:
+        braking_dist = _simulate_braking(vehicle, speed_ms, friction_coeff)
+    else:
+        braking_dist = speed_ms ** 2 / (2 * friction_coeff * G)
 
     total = reaction_dist + braking_dist
     return reaction_dist, braking_dist, total

@@ -197,6 +197,24 @@ class TestBrakingDistance:
         assert bd == 0
         assert td == 0
 
+    def test_vehicle_specific_braking(self, sedan):
+        """传入 Vehicle 参数时，不同车重产生不同制动距离"""
+        _, bd_sedan, _ = calc_braking_distance(
+            100, friction_coeff=0.90, vehicle=sedan)
+        # 简化公式结果（无 Vehicle 参数，仅作参考）
+        _, bd_simple, _ = calc_braking_distance(100, friction_coeff=0.90)
+        # 车辆参数版因增加风阻辅助制动，结果应 ≤ 简化版
+        assert bd_sedan <= bd_simple
+        assert bd_sedan > 30  # 不应荒谬地短
+
+    def test_heavier_vehicle_longer_braking(self, sedan, truck):
+        """较重车型制动距离更长"""
+        _, bd_sedan, _ = calc_braking_distance(
+            80, friction_coeff=0.90, vehicle=sedan)
+        _, bd_truck, _ = calc_braking_distance(
+            80, friction_coeff=0.90, vehicle=truck)
+        assert bd_truck > bd_sedan
+
 
 # calc_acceleration — F = ma physics
 

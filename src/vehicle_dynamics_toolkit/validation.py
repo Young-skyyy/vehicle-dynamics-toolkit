@@ -107,30 +107,40 @@ def validate_acceleration(vehicle: Vehicle, target_kmh: float = 100) -> dict:
     }
 
 
-def validate_braking(speed_kmh: float = 100, friction_coeff: float = 0.90) -> dict:
-    """校验 100–0 km/h 制动距离。
+def validate_braking(vehicle: Vehicle, speed_kmh: float = 100,
+                     friction_coeff: float = 0.90) -> dict:
+    """校验 100–0 km/h 制动距离，使用车辆参数（质量、风阻、滚动阻力）。
 
-    使用 μ=0.90 代表现代乘用车干沥青路面（含 ABS 优化），
-    与全部三款车的制动基准均值对比。容差 ±20% 因为简化公式
-    未包含 ABS、重量转移及轮胎非线性。
+    与旧版简化 v²/(2μg) 公式不同，此版本通过时间步进法计算：
+    总减速度 = μ·g（轮胎-路面摩擦） + (F_roll + F_drag)/m（行驶阻力）
+    不同车型因质量、风阻系数、迎风面积不同，制动距离也不同。
 
     Args:
-        speed_kmh:      制动初速度 (km/h)，默认 100
-        friction_coeff: 路面摩擦系数，默认 0.90
+        vehicle:       Vehicle 对象
+        speed_kmh:     制动初速度 (km/h)，默认 100
+        friction_coeff: 路面摩擦系数，默认 0.90（干沥青+ABS）
 
     Returns:
         dict: {model_dist_m, benchmark_dist_m, error_pct, verdict}
     """
-    _reaction, braking_dist, _total = calc_braking_distance(speed_kmh, friction_coeff=friction_coeff)
-    model_dist = round(braking_dist, 1)
+    _reaction, model_dist, _total = calc_braking_distance(
+        speed_kmh, friction_coeff=friction_coeff, vehicle=vehicle)
+    model_dist = round(model_dist, 1)
 
-    # 各车型基准制动距离取均值作为比较基准
-    bench_values = [b["braking_100_0_m"] for b in REAL_VEHICLE_BENCHMARKS.values()]
-    bench_avg = sum(bench_values) / len(bench_values)
-    error = _error_pct(model_dist, bench_avg)
+    benchmark = _lookup_benchmark(vehicle)
+    if benchmark is None:
+        return {
+            "model_dist_m": model_dist,
+            "benchmark_dist_m": None,
+            "error_pct": None,
+            "verdict": "N/A (无基准数据)",
+        }
+
+    bench_dist = benchmark["braking_100_0_m"]
+    error = _error_pct(model_dist, bench_dist)
     return {
         "model_dist_m": model_dist,
-        "benchmark_dist_m": round(bench_avg, 1),
+        "benchmark_dist_m": bench_dist,
         "error_pct": round(error, 1),
         "verdict": _verdict(error, BRAKING_TOLERANCE_PCT),
     }
@@ -208,7 +218,7 @@ def print_validation_report() -> None:
         )
 
         # 制动
-        brk = validate_braking()
+        brk = validate_braking(v, friction_coeff=0.90)
         brk_bench = bm.get("braking_100_0_m", 0)
         brk_error = _error_pct(brk["model_dist_m"], brk_bench)
         brk_verdict = _verdict(brk_error, BRAKING_TOLERANCE_PCT)
@@ -260,8 +270,10 @@ def explain_discrepancy(category: str) -> str:
             "因此加速时间存在偏差。"
         ),
         "braking": (
-            "模型使用 v²/(2μg) 公式，默认 μ=0.90 代表现代乘用车干沥青路面制动性能"
-            "（含 ABS 滑移率优化）。剩余差异源于未模拟制动热衰退、重量转移及"
+            "模型使用 μ·g + 行驶阻力（风阻+滚阻）时间步进仿真，μ=0.90 "
+            "代表现代乘用车干沥青路面制动性能（含 ABS 滑移率优化）。"
+            "较重车型因惯性大、轻车型因风阻占比高，制动距离分别不同。"
+            "剩余差异源于未模拟制动热衰退、重量转移及"
             "轮胎-路面非线性摩擦特性（Pacejka 轮胎模型当前仅用于横向力计算）。"
         ),
     }
