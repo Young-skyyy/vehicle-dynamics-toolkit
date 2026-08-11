@@ -14,6 +14,10 @@
   - `VehicleECU.update()` 从锯齿波改为 P-controller 跟踪 WLTC 目标车速
   - 提供 `get_wltc_speed()`、`get_wltc_total_duration()`、`get_wltc_phase()` 查询函数
   - 循环结束后自动回到起点，支持无限循环仿真
+- **制动仿真支持车辆参数** (`vehicle.py`)
+  - `calc_braking_distance` 新增可选 `vehicle` 参数，传入时使用时间步进法
+  - 制动距离考虑整车质量、风阻系数、迎风面积、滚动阻力
+  - 三车校验制动距离各不相同（旧版统为 43.7m）
 
 ### 变更
 
