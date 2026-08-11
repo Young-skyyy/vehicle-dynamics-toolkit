@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.1.0] — 2026-08-11
+
+### 新增
+
+- **C++ Pacejka 轮胎模型** (`vehicle_dynamics_node.cpp`)
+  - 新增 `tire_model` ROS2 参数，支持 `"linear"` 和 `"pacejka"` 切换
+  - 新增 Pacejka 魔术公式参数：`pacejka_B_f/r`、`pacejka_C_f/r`、`pacejka_D_f/r`、`pacejka_E_f/r`
+  - 实现 `pacejka_lateral_force()` 函数：Fy = D·sin(C·arctan(Bα − E(Bα − arctan(Bα))))
+  - 启动日志显示当前轮胎模型
+- **CAN 仿真对接 WLTC Class 3 驾驶循环** (`_wltc_profile.py`)
+  - 嵌入完整 WLTC Class 3 速度曲线（1800 s × 1 Hz，Low→Medium→High→Extra-High 四阶段）
+  - `VehicleECU.update()` 从锯齿波改为 P-controller 跟踪 WLTC 目标车速
+  - 提供 `get_wltc_speed()`、`get_wltc_total_duration()`、`get_wltc_phase()` 查询函数
+  - 循环结束后自动回到起点，支持无限循环仿真
+
+### 变更
+
+- `VehicleECU` 移除 `accelerating` 属性，新增 `_wltc_time` 追踪循环时间
+- `VehicleECU` 档位切换阈值调整以匹配 WLTC 高速段（5 档 >100 km/h）
+- 测试用例更新：`test_can_demo.py` 适配新 VehicleECU 接口
+
 ## [3.0.0] — 2026-08-10
 
 ### 重大变更

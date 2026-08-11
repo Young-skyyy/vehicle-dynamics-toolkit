@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vehicle-dynamics-toolkit"
-version = "3.0.0"
+version = "3.1.0"
 description = "Vehicle dynamics toolkit for automotive software testing. Python library + C++ ROS2 nodes: CAN bus simulation, UDS ISO 14229 diagnostics, 2-DOF bicycle model, Pacejka Magic Formula tire model, IDM ACC car-following simulation."
 readme = "README.md"
 license = {text = "MIT"}

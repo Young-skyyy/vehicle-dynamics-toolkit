@@ -12,6 +12,7 @@ from datetime import datetime
 
 from .uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
 from .can_bus_load_demo import frame_bits as calc_frame_bits
+from ._wltc_profile import get_wltc_speed, get_wltc_total_duration, get_wltc_phase
 
 
 # 1. CAN 帧定义
@@ -174,7 +175,10 @@ def parse_can_frame(data: list[int], msg_def: dict) -> dict[str, float]:
 # 3. ECU 仿真器
 
 class VehicleECU:
-    """整车 ECU 状态机，维持车辆运行参数随时间连续变化。
+    """整车 ECU 状态机，追踪 WLTC Class 3 驾驶循环的速度曲线。
+
+    使用 P-controller 跟踪 WLTC 目标车速，生成对应的油门/制动/档位/转速信号，
+    模拟真实驾驶循环下的 ECU 行为。循环结束后回到起点重新开始。
 
     Args:
         seed: 随机种子，None = 不可复现，传入 int 可固定仿真结果
@@ -189,46 +193,68 @@ class VehicleECU:
         self.gear = 0                               # P 档
         self.soc = 80.0                             # 电池 SOC
         self.brake_pressure = 0
-        self.accelerating = False
+        self._wltc_time = 0.0                       # WLTC 循环时间 (s)
 
     def update(self, dt_s):
-        """每 dt 秒更新一次车辆状态"""
-        # 模拟一个简单的驾驶循环
-        if not self.accelerating and self.speed <= 0:
-            self.accelerating = True
-            self.gear = 1
-        if self.speed >= 80:
-            self.accelerating = False
+        """每 dt_s 秒更新一次车辆状态，追踪 WLTC Class 3 目标车速。
 
-        if self.accelerating:
-            self.throttle = min(80, self.throttle + self._rng.uniform(0, 10) * dt_s)
-            self.rpm += int(500 * dt_s)
-            self.speed += 3 * dt_s
+        使用 P-controller 根据目标速度与实际速度的偏差调节油门/制动：
+        - 目标 > 实际：增加油门（加速）
+        - 目标 < 实际：减小油门或施加制动（减速）
+        档位根据实际车速查表切换。
+        """
+        # WLTC 目标车速 (km/h)
+        total = get_wltc_total_duration()
+        target_speed = get_wltc_speed(self._wltc_time % total)
+        self._wltc_time += dt_s
+
+        # P-controller: 根据速度误差调节油门/制动
+        speed_error = target_speed - self.speed
+
+        if speed_error > 0:
+            # 加速需求：油门与速度误差成正比，饱和在 0~100
+            self.throttle = min(100, max(0, speed_error * 8 + 15))
+            self.brake_pressure = 0
         else:
-            self.throttle = max(0, self.throttle - self._rng.uniform(5, 15) * dt_s)
-            self.rpm -= int(300 * dt_s)
-            self.speed = max(0, self.speed - 2 * dt_s)
+            # 减速或匀速：松油门 + 必要时制动
+            self.throttle = max(0, 15 + speed_error * 2)
+            self.brake_pressure = max(0, min(10, -speed_error * 3))
 
-        self.rpm = max(800, min(6000, self.rpm))
-        self.speed = max(0, min(120, self.speed))
-        self.coolant_temp = min(95, self.coolant_temp + 0.5 * dt_s)
-        self.soc -= 0.001 * dt_s  # 缓慢放电
+        # 速度跟踪：简单的加速度模型
+        accel = (self.throttle / 100) * 4 - (self.brake_pressure / 10) * 8
+        accel -= (self.speed / 120) * 0.5              # 高速下轻微阻力修正
+        if target_speed < 0.5 and self.speed < 0.5:
+            self.speed = 0.0                            # 完全停车
+        else:
+            self.speed = max(0, self.speed + accel * dt_s)
+
+        # 发动机转速：车速 → 轮速 → 传动比 → 发动机转速
+        # 简化映射：怠速 800 rpm ~ 最高 6000 rpm
+        gear_ratio_approx = {
+            1: 30, 2: 22, 3: 17, 4: 13, 5: 10, 0: 0,
+        }
+        gr = gear_ratio_approx.get(self.gear, 0)
+        self.rpm = max(800, min(6000, self.speed * gr + 800))
 
         # 档位随车速变化
-        if self.speed > 60:
+        if self.speed > 100:
             self.gear = 5
-        elif self.speed > 40:
+        elif self.speed > 70:
             self.gear = 4
-        elif self.speed > 25:
+        elif self.speed > 45:
             self.gear = 3
-        elif self.speed > 10:
+        elif self.speed > 20:
             self.gear = 2
-        elif self.speed > 0:
+        elif self.speed > 2:
             self.gear = 1
         else:
             self.gear = 0
 
-        self.brake_pressure = self._rng.uniform(0, 5) if not self.accelerating else 0
+        # 冷却液温度：冷启动后逐渐升温到工作温度
+        self.coolant_temp = min(95, self.coolant_temp + 0.5 * dt_s)
+
+        # 电池 SOC：缓慢消耗
+        self.soc = max(0, self.soc - 0.0005 * dt_s)
 
 
 # 4. CAN 帧信号生成器 —— 每个 ECU 类型一个独立函数，通过字典 dispatch

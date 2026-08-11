@@ -3,7 +3,10 @@
  * @brief 车辆动力学 C++ ROS2 节点 — 纵向 + 横向 + 换挡 + SAE J2263
  *
  * 移植自 Python vehicle.py + lateral_dynamics.py
- * 使用 rclcpp (ROS2 C++ 客户端库)，生产级实时仿真
+ * 使用 rclcpp (ROS2 C++ 客户端库)
+ *
+ * 轮胎模型: 线性（Fy = -Cα·α）与 Pacejka 魔术公式可切换
+ *   Pacejka: Fy(α) = D·sin(C·arctan(Bα − E(Bα − arctan(Bα))))
  */
 
 #include <chrono>
@@ -60,6 +63,19 @@ public:
         this->declare_parameter("max_rpm", 6200.0);        // 红线
         this->declare_parameter("publish_jitter", false);
 
+        // ── 轮胎模型 ──
+        this->declare_parameter("tire_model", "linear");   // "linear" 或 "pacejka"
+        // Pacejka 魔术公式参数 (前轴)
+        this->declare_parameter("pacejka_B_f", 10.0);      // 刚度因子 (1/rad)
+        this->declare_parameter("pacejka_C_f", 1.3);        // 形状因子
+        this->declare_parameter("pacejka_D_f", 7644.0);     // 峰值因子 ≈ 前轴轴荷 (N)
+        this->declare_parameter("pacejka_E_f", -1.5);       // 曲率因子
+        // Pacejka 魔术公式参数 (后轴)
+        this->declare_parameter("pacejka_B_r", 10.0);
+        this->declare_parameter("pacejka_C_r", 1.3);
+        this->declare_parameter("pacejka_D_r", 7056.0);     // 峰值因子 ≈ 后轴轴荷 (N)
+        this->declare_parameter("pacejka_E_r", -1.5);
+
         dt_ = this->get_parameter("dt").as_double();
         mass_ = this->get_parameter("mass").as_double();
         max_torque_ = this->get_parameter("max_torque").as_double();
@@ -72,6 +88,17 @@ public:
         Cr_ = this->get_parameter("cornering_stiffness_r").as_double();
         idle_rpm_ = this->get_parameter("idle_rpm").as_double();
         max_rpm_ = this->get_parameter("max_rpm").as_double();
+
+        // 轮胎模型参数
+        tire_model_ = this->get_parameter("tire_model").as_string();
+        pbj_B_f_ = this->get_parameter("pacejka_B_f").as_double();
+        pbj_C_f_ = this->get_parameter("pacejka_C_f").as_double();
+        pbj_D_f_ = this->get_parameter("pacejka_D_f").as_double();
+        pbj_E_f_ = this->get_parameter("pacejka_E_f").as_double();
+        pbj_B_r_ = this->get_parameter("pacejka_B_r").as_double();
+        pbj_C_r_ = this->get_parameter("pacejka_C_r").as_double();
+        pbj_D_r_ = this->get_parameter("pacejka_D_r").as_double();
+        pbj_E_r_ = this->get_parameter("pacejka_E_r").as_double();
 
         // 横摆转动惯量 Iz ≈ m·a·b
         yaw_inertia_ = mass_ * cg_to_front_ * cg_to_rear_;
@@ -131,8 +158,8 @@ public:
                 }
             });
 
-        RCLCPP_INFO(this->get_logger(), "VehicleDynamicsNode (C++) started @ %.0f Hz (jitter monitoring: %s)",
-            1.0/dt_, this->get_parameter("publish_jitter").as_bool() ? "ON" : "OFF");
+        RCLCPP_INFO(this->get_logger(), "VehicleDynamicsNode (C++) started @ %.0f Hz (tire: %s, jitter: %s)",
+            1.0/dt_, tire_model_.c_str(), this->get_parameter("publish_jitter").as_bool() ? "ON" : "OFF");
     }
 
 private:
@@ -150,6 +177,11 @@ private:
     double Cf_ = 80000.0, Cr_ = 70000.0;
     double yaw_inertia_ = 3000.0;
     double idle_rpm_ = 800.0, max_rpm_ = 6200.0;
+
+    // 轮胎模型
+    std::string tire_model_ = "linear";
+    double pbj_B_f_ = 10.0, pbj_C_f_ = 1.3, pbj_D_f_ = 7644.0, pbj_E_f_ = -1.5;
+    double pbj_B_r_ = 10.0, pbj_C_r_ = 1.3, pbj_D_r_ = 7056.0, pbj_E_r_ = -1.5;
 
     // 纵向
     double vx_ = 0.0, ax_ = 0.0, position_x_ = 0.0;
@@ -265,7 +297,17 @@ private:
     }
 
     // ═══════════════════════════════════════
-    // 横向动力学：自行车模型 + Pacejka
+    // Pacejka 魔术公式 — 纯侧偏轮胎侧向力 (N)
+    // Fy(α) = D · sin(C · arctan(Bα − E·(Bα − arctan(Bα))))
+    // ═══════════════════════════════════════
+    double pacejka_lateral_force(double B, double C, double D, double E,
+                                  double alpha) const {
+        double Bx = B * alpha;
+        return D * std::sin(C * std::atan(Bx - E * (Bx - std::atan(Bx))));
+    }
+
+    // ═══════════════════════════════════════
+    // 横向动力学：自行车模型 + 线性/Pacejka 可切换
     // ═══════════════════════════════════════
     void lateral_step() {
         if (std::abs(vx_) < 0.01) return;  // 静止不做横向计算
@@ -274,9 +316,17 @@ private:
         double alpha_f = (vy_ + cg_to_front_ * yaw_rate_) / vx_ - steer_angle_;
         double alpha_r = (vy_ - cg_to_rear_ * yaw_rate_) / vx_;
 
-        // 线性轮胎模型: Fy = -Cα × α
-        double Fyf = -Cf_ * alpha_f;
-        double Fyr = -Cr_ * alpha_r;
+        // 侧向力 — 根据 tire_model 选择线性或 Pacejka
+        double Fyf, Fyr;
+        if (tire_model_ == "pacejka") {
+            // Pacejka 公式输出 magnitude，负号对应 SAE 坐标系
+            Fyf = -pacejka_lateral_force(pbj_B_f_, pbj_C_f_, pbj_D_f_, pbj_E_f_, alpha_f);
+            Fyr = -pacejka_lateral_force(pbj_B_r_, pbj_C_r_, pbj_D_r_, pbj_E_r_, alpha_r);
+        } else {
+            // 线性轮胎模型: Fy = -Cα × α
+            Fyf = -Cf_ * alpha_f;
+            Fyr = -Cr_ * alpha_r;
+        }
 
         // 侧向加速度
         ay_ = (Fyf + Fyr) / mass_ - vx_ * yaw_rate_;

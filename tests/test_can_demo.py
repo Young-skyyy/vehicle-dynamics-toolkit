@@ -20,6 +20,7 @@ from vehicle_dynamics_toolkit.can_demo import (
     generate_frame,
     _signal_bit_positions,
 )
+from vehicle_dynamics_toolkit._wltc_profile import get_wltc_speed
 
 
 # encode_signal / decode_signal
@@ -154,31 +155,32 @@ class TestVehicleECU:
         assert ecu.gear == 0
         assert ecu.soc == 80.0
         assert ecu.brake_pressure == 0
-        assert not ecu.accelerating
+        assert ecu._wltc_time == 0.0
 
     def test_update_does_not_exceed_bounds(self):
         ecu = VehicleECU()
         for _ in range(500):  # simulate 5 seconds
             ecu.update(0.01)
             assert 800 <= ecu.rpm <= 6000
-            assert 0 <= ecu.speed <= 120
+            assert 0 <= ecu.speed <= max(get_wltc_speed(5.0) + 5, 133)
             assert 25 <= ecu.coolant_temp <= 95
             assert ecu.soc > 0
             assert 0 <= ecu.gear <= 5
-            assert 0 <= ecu.brake_pressure <= 5
+            assert 0 <= ecu.brake_pressure <= 10
 
-    def test_speed_increases_when_accelerating(self):
+    def test_speed_starts_at_zero_and_tracks_wltc(self):
+        """WLTC 循环初始段为静止，0.01s 后 WLTC target=0，速度保持 0"""
         ecu = VehicleECU()
         ecu.update(0.01)
-        assert ecu.accelerating  # should start accelerating
-        assert ecu.rpm >= 800
+        # WLTC 前 11 秒目标车速为 0，速度应保持 0
+        assert ecu.speed == 0
 
     def test_gear_changes_with_speed(self):
         ecu = VehicleECU()
         ecu.speed = 50
         ecu.update(0.01)
-        # Speed > 40 should give gear >= 4
-        assert ecu.gear >= 4
+        # Speed 50 should give gear 3 (45 < 50 <= 70)
+        assert ecu.gear == 3
 
 
 # generate_frame
