@@ -19,6 +19,7 @@ from vehicle_dynamics_toolkit.can_demo import (
     simulate_dtc_check,
     generate_frame,
     _signal_bit_positions,
+    _SIGNAL_NAME_EN,
 )
 
 
@@ -233,11 +234,14 @@ class TestDBCGeneration:
             assert str(msg_def["id"]) in content, f"Missing ID {msg_def['id']} for {name}"
 
     def test_dbc_contains_baudrate(self, tmp_path):
+        """波特率保留在函数参数/返回值里，但不写入 BS_（cantools 不解析 BS_ 后的数值）"""
         filepath = str(tmp_path / "test.dbc")
-        generate_dbc(filepath=filepath, baudrate=500000)
+        info = generate_dbc(filepath=filepath, baudrate=500000)
+        assert info["baudrate"] == 500000
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        assert "500000" in content
+        assert "BS_:" in content
+        assert "500000" not in content
 
     def test_dbc_contains_signal_definitions(self, tmp_path):
         filepath = str(tmp_path / "test.dbc")
@@ -249,14 +253,30 @@ class TestDBCGeneration:
         assert "GenMsgCycleTime" in content
 
     def test_dbc_intel_byte_order(self, tmp_path):
-        """车速信号设为 Intel 字节序，DBC 应输出 @1"""
+        """车速信号设为 Intel 字节序，DBC 应输出 @1，信号名为 ASCII"""
         filepath = str(tmp_path / "test.dbc")
         generate_dbc(filepath=filepath)
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        # "车速" signal is Intel → DBC 输出 @1
-        assert "车速" in content
+        # VehicleSpeed(车速) 是 Intel -> DBC 输出 @1
+        assert "VehicleSpeed" in content
+        assert "车速" not in content  # 信号名必须为 ASCII
         assert "@1" in content  # 至少有一个 Intel 信号
+
+    def test_dbc_spec_compliant(self, tmp_path):
+        """回归测试：信号名 ASCII、接收方逗号分隔、BS_ 不带数值"""
+        filepath = str(tmp_path / "test.dbc")
+        generate_dbc(filepath=filepath)
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "BS_:" in content
+        assert "BS_: " not in content
+        for line in content.splitlines():
+            if line.startswith(" SG_"):
+                name = line.split(":", 1)[0].replace("SG_", "").strip()
+                assert name.isascii(), f"信号名必须为 ASCII: {name!r}"
+                receivers = line.rsplit('"', 1)[1].strip()
+                assert "," in receivers, f"接收方必须用逗号分隔: {line!r}"
 
     def test_teardown_cleanup(self, tmp_path):
         """Generated file should be valid and not empty."""
@@ -282,22 +302,32 @@ class TestCANMessages:
                     assert field in sig, f"{name}.{sig.get('name', '?')} missing {field}"
 
     def test_signal_bit_positions_no_overlap(self):
-        """Signals within a message should not overlap bit ranges."""
+        """Signals within a message must not overlap on the actual wire bits."""
         for name, msg in CAN_MESSAGES.items():
             bits_used = set()
             for sig in msg["signals"]:
-                for bit in range(sig["start"], sig["start"] + sig["len"]):
-                    assert bit not in bits_used, (
-                        f"Bit {bit} overlap in {name} signal {sig['name']}"
-                    )
-                    bits_used.add(bit)
+                positions = _signal_bit_positions(
+                    sig["start"], sig["len"], sig.get("byte_order", "motorola")
+                )
+                wire_bits = {(b, bit) for b, bit, _ in positions}
+                overlap = bits_used & wire_bits
+                assert not overlap, (
+                    f"Overlap in {name} signal {sig['name']}: {sorted(overlap)}"
+                )
+                bits_used |= wire_bits
 
     def test_all_signals_fit_in_64_bits(self):
+        """Every signal bit must land in one of the 8 payload bytes."""
         for name, msg in CAN_MESSAGES.items():
             for sig in msg["signals"]:
-                assert sig["start"] + sig["len"] <= 64, (
-                    f"{name}.{sig['name']} exceeds 64 bits"
+                positions = _signal_bit_positions(
+                    sig["start"], sig["len"], sig.get("byte_order", "motorola")
                 )
+                for byte_idx, bit_in_byte, _ in positions:
+                    assert 0 <= byte_idx < 8, (
+                        f"{name}.{sig['name']} bit lands in byte {byte_idx}"
+                    )
+                    assert 0 <= bit_in_byte <= 7
 
     def test_byte_order_values_are_valid(self):
         """byte_order 只能是 motorola 或 intel"""
@@ -320,7 +350,7 @@ class TestIntelByteOrder:
             "desc": "Intel 测试报文",
             "signals": [
                 {"name": "sig16", "start": 8,  "len": 16, "scale": 0.1, "offset": 0, "unit": "", "byte_order": "intel"},
-                {"name": "sig8",  "start": 0,  "len": 8,  "scale": 1,   "offset": 0, "unit": "", "byte_order": "motorola"},
+                {"name": "sig8",  "start": 7,  "len": 8,  "scale": 1,   "offset": 0, "unit": "", "byte_order": "motorola"},
                 {"name": "sig32", "start": 24, "len": 32, "scale": 0.01, "offset": 0, "unit": "", "byte_order": "intel"},
             ],
         }
@@ -355,10 +385,109 @@ class TestIntelByteOrder:
         assert positions[15] == (2, 7, 15)   # byte 2, bit 7, shift 15 (MSB)
 
     def test_motorola_signal_bit_positions(self):
-        """验证 Motorola 16-bit 信号从 start_bit=24 的位布局"""
+        """Motorola 16-bit signal at start_bit=24 follows the DBC standard."""
         positions = _signal_bit_positions(start_bit=24, length=16, byte_order="motorola")
-        # Motorola MSB first: i=0→bit 24, i=15→bit 23
+        # network start = 8*3 + (7-0) = 31: MSB at byte3 bit0, then toward byte5
         assert positions[0] == (3, 0, 15)    # byte 3, bit 0, shift 15 (MSB)
-        assert positions[7] == (3, 7, 8)     # byte 3, bit 7, shift 8
-        assert positions[8] == (2, 0, 7)     # byte 2, bit 0, shift 7
-        assert positions[15] == (2, 7, 0)    # byte 2, bit 7, shift 0 (LSB)
+        assert positions[7] == (4, 1, 8)     # byte 4, bit 1, shift 8
+        assert positions[8] == (4, 0, 7)     # byte 4, bit 0, shift 7
+        assert positions[15] == (5, 1, 0)    # byte 5, bit 1, shift 0 (LSB)
+
+    def test_motorola_non_byte_aligned(self):
+        """Non-byte-aligned Motorola: start_bit=8 -> byte1 bit0, then byte2/3."""
+        positions = _signal_bit_positions(start_bit=8, length=16, byte_order="motorola")
+        assert positions[0] == (1, 0, 15)    # MSB at byte 1, bit 0
+        assert positions[1] == (2, 7, 14)    # next bit wraps to byte 2, bit 7
+        assert positions[-1] == (3, 1, 0)    # LSB at byte 3, bit 1
+
+    def test_motorola_byte_aligned_16bit(self):
+        """start_bit=15, len=16 occupies bytes 1..2 exactly, MSB first."""
+        positions = _signal_bit_positions(start_bit=15, length=16, byte_order="motorola")
+        assert positions[0] == (1, 7, 15)
+        assert positions[7] == (1, 0, 8)
+        assert positions[8] == (2, 7, 7)
+        assert positions[15] == (2, 0, 0)
+
+
+# cantools compatibility: the generated DBC must load in cantools without
+# overlapping signals, and our bit layout must match cantools byte for byte.
+# These are the regression tests for the Motorola big-endian layout bug.
+
+class TestCantoolsCompatibility:
+    """Regression tests: our layout matches the DBC standard / cantools."""
+
+    @pytest.fixture
+    def cantools(self):
+        return pytest.importorskip("cantools")
+
+    @pytest.fixture
+    def db(self, cantools, tmp_path):
+        filepath = str(tmp_path / "simulated_ecu.dbc")
+        generate_dbc(filepath=filepath)
+        return cantools.database.load_file(filepath)
+
+    @staticmethod
+    def _ascii_names(msg_def):
+        return [_SIGNAL_NAME_EN.get(s["name"], s["name"]) for s in msg_def["signals"]]
+
+    def test_dbc_loads_without_overlap(self, db):
+        """cantools can load the generated DBC (no overlapping signals)."""
+        assert len(db.messages) == len(CAN_MESSAGES)
+
+    def test_encode_layout_matches_cantools(self, db):
+        """Same raw values: our build_can_frame bytes == cantools bytes."""
+        cases = {
+            "EngineData": [30, 2000, 80, 60, 40],
+            "BatteryStatus": [80, 380, 30, 30, 26],
+            "ABS_WheelSpeed": [80, 80, 79, 80],
+            "Transmission": [3, 80, 2500],
+            "BodyControl": [0, 0, 0, 0, 1, 0, 0, 0],
+        }
+        for msg_name, values in cases.items():
+            msg_def = CAN_MESSAGES[msg_name]
+            raws = [encode_signal(v, s) for v, s in zip(values, msg_def["signals"])]
+            ours = build_can_frame(msg_def, values)
+            ct_msg = db.get_message_by_name(msg_name)
+            theirs = ct_msg.encode(
+                dict(zip(self._ascii_names(msg_def), raws)), scaling=False
+            )
+            assert bytes(ours) == theirs, f"{msg_name}: layout mismatch vs cantools"
+
+    def test_decode_layout_matches_cantools(self, db):
+        """cantools decodes our frame bytes back to the same raw values."""
+        cases = {
+            "EngineData": [30, 2000, 80, 60, 40],
+            "BatteryStatus": [80, 380, 30, 30, 26],
+            "ABS_WheelSpeed": [80, 80, 79, 80],
+            "Transmission": [3, 80, 2500],
+            "BodyControl": [0, 0, 0, 0, 1, 0, 0, 0],
+        }
+        for msg_name, values in cases.items():
+            msg_def = CAN_MESSAGES[msg_name]
+            raws = [encode_signal(v, s) for v, s in zip(values, msg_def["signals"])]
+            data = build_can_frame(msg_def, values)
+            ct_msg = db.get_message_by_name(msg_name)
+            decoded = ct_msg.decode(bytes(data), scaling=False)
+            got = [decoded[name] for name in self._ascii_names(msg_def)]
+            assert got == raws, f"{msg_name}: cantools decode mismatch"
+
+    def test_physical_encode_matches_cantools(self, db):
+        """Clean physical values (exact raw) also encode identically.
+
+        Values are chosen so (value - offset) / scale is an exact integer.
+        (80.1 / 0.01 type float truncation is a separate encode_signal issue.)
+        """
+        cases = {
+            "EngineData": [30, 2000, 80, 60, 40],
+            "BatteryStatus": [80, 380, 30, 30, 26],
+            "Transmission": [3, 80, 2500],
+            "BodyControl": [0, 0, 0, 0, 1, 0, 0, 0],
+        }
+        for msg_name, values in cases.items():
+            msg_def = CAN_MESSAGES[msg_name]
+            ours = build_can_frame(msg_def, values)
+            ct_msg = db.get_message_by_name(msg_name)
+            theirs = ct_msg.encode(
+                dict(zip(self._ascii_names(msg_def), values)), scaling=True
+            )
+            assert bytes(ours) == theirs, f"{msg_name}: physical encode mismatch"

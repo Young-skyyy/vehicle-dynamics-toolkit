@@ -23,11 +23,11 @@ CAN_MESSAGES = {
         "cycle_ms": 10,
         "desc": "发动机数据",
         "signals": [
-            {"name": "节气门位置",   "start": 0,  "len": 8,  "scale": 0.4,   "offset": 0,    "unit": "%",  "byte_order": "motorola"},
-            {"name": "发动机转速",   "start": 8,  "len": 16, "scale": 0.25,  "offset": 0,    "unit": "rpm", "byte_order": "motorola"},
-            {"name": "冷却液温度",   "start": 24, "len": 8,  "scale": 1,     "offset": -40,  "unit": "degC", "byte_order": "motorola"},
+            {"name": "节气门位置",   "start": 7,  "len": 8,  "scale": 0.4,   "offset": 0,    "unit": "%",  "byte_order": "motorola"},
+            {"name": "发动机转速",   "start": 15,  "len": 16, "scale": 0.25,  "offset": 0,    "unit": "rpm", "byte_order": "motorola"},
+            {"name": "冷却液温度",   "start": 31, "len": 8,  "scale": 1,     "offset": -40,  "unit": "degC", "byte_order": "motorola"},
             {"name": "车速",         "start": 32, "len": 16, "scale": 0.01,  "offset": 0,    "unit": "km/h", "byte_order": "intel"},
-            {"name": "进气歧管压力", "start": 48, "len": 8,  "scale": 1,     "offset": 0,    "unit": "kPa", "byte_order": "motorola"},
+            {"name": "进气歧管压力", "start": 55, "len": 8,  "scale": 1,     "offset": 0,    "unit": "kPa", "byte_order": "motorola"},
         ],
     },
 
@@ -37,11 +37,11 @@ CAN_MESSAGES = {
         "cycle_ms": 100,
         "desc": "电池状态",
         "signals": [
-            {"name": "SOC",          "start": 0,  "len": 8,  "scale": 0.5,   "offset": 0,   "unit": "%",     "byte_order": "motorola"},
-            {"name": "总电压",       "start": 8,  "len": 16, "scale": 0.1,   "offset": 0,   "unit": "V",     "byte_order": "motorola"},
-            {"name": "电流",         "start": 24, "len": 16, "scale": 0.1,   "offset": -500, "unit": "A",    "byte_order": "motorola"},
-            {"name": "最高单体温度",  "start": 40, "len": 8,  "scale": 1,     "offset": -40, "unit": "degC",  "byte_order": "motorola"},
-            {"name": "最低单体温度",  "start": 48, "len": 8,  "scale": 1,     "offset": -40, "unit": "degC",  "byte_order": "motorola"},
+            {"name": "SOC",          "start": 7,  "len": 8,  "scale": 0.5,   "offset": 0,   "unit": "%",     "byte_order": "motorola"},
+            {"name": "总电压",       "start": 15,  "len": 16, "scale": 0.1,   "offset": 0,   "unit": "V",     "byte_order": "motorola"},
+            {"name": "电流",         "start": 31, "len": 16, "scale": 0.1,   "offset": -500, "unit": "A",    "byte_order": "motorola"},
+            {"name": "最高单体温度",  "start": 47, "len": 8,  "scale": 1,     "offset": -40, "unit": "degC",  "byte_order": "motorola"},
+            {"name": "最低单体温度",  "start": 55, "len": 8,  "scale": 1,     "offset": -40, "unit": "degC",  "byte_order": "motorola"},
         ],
     },
 
@@ -51,10 +51,10 @@ CAN_MESSAGES = {
         "cycle_ms": 20,
         "desc": "轮速与制动",
         "signals": [
-            {"name": "左前轮速",    "start": 0,  "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
-            {"name": "右前轮速",    "start": 16, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
-            {"name": "左后轮速",    "start": 32, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
-            {"name": "右后轮速",    "start": 48, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
+            {"name": "左前轮速",    "start": 7,  "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
+            {"name": "右前轮速",    "start": 23, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
+            {"name": "左后轮速",    "start": 39, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
+            {"name": "右后轮速",    "start": 55, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
         ],
     },
 
@@ -64,9 +64,9 @@ CAN_MESSAGES = {
         "cycle_ms": 50,
         "desc": "变速箱状态",
         "signals": [
-            {"name": "当前档位",   "start": 0,  "len": 4,  "scale": 1,   "offset": 0,   "unit": "",     "byte_order": "motorola"},
-            {"name": "变速箱油温", "start": 8,  "len": 8,  "scale": 1,   "offset": -40, "unit": "degC",  "byte_order": "motorola"},
-            {"name": "输出轴转速", "start": 16, "len": 16, "scale": 1,   "offset": 0,   "unit": "rpm",  "byte_order": "motorola"},
+            {"name": "当前档位",   "start": 7,  "len": 4,  "scale": 1,   "offset": 0,   "unit": "",     "byte_order": "motorola"},
+            {"name": "变速箱油温", "start": 15,  "len": 8,  "scale": 1,   "offset": -40, "unit": "degC",  "byte_order": "motorola"},
+            {"name": "输出轴转速", "start": 23, "len": 16, "scale": 1,   "offset": 0,   "unit": "rpm",  "byte_order": "motorola"},
         ],
     },
 
@@ -76,14 +76,14 @@ CAN_MESSAGES = {
         "cycle_ms": 200,
         "desc": "车身状态",
         "signals": [
-            {"name": "左前门",     "start": 0,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "右前门",     "start": 2,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "左后门",     "start": 4,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "右后门",     "start": 6,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "近光灯",     "start": 8,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "远光灯",     "start": 10, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "转向灯",     "start": 12, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "后备箱",     "start": 14, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "左前门",     "start": 7,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "右前门",     "start": 5,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "左后门",     "start": 3,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "右后门",     "start": 1,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "近光灯",     "start": 15,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "远光灯",     "start": 13, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "转向灯",     "start": 11, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
+            {"name": "后备箱",     "start": 9, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
         ],
     },
 }
@@ -105,35 +105,30 @@ def decode_signal(raw: int, sig: dict) -> float:
 
 def _signal_bit_positions(start_bit: int, length: int,
                           byte_order: str) -> list[tuple[int, int, int]]:
-    """计算信号每个 bit 的 (byte_idx, bit_in_byte, signal_bit_shift)。
+    """Return (byte_idx, bit_in_byte, signal_bit_shift) for each signal bit.
 
-    - Motorola: MSB first, 字节地址递减跨字节
-    - Intel:    LSB first, 字节地址递增跨字节
-
-    Returns:
-        list of (byte_idx, bit_in_byte, shift) tuples, length 个
+    DBC bit numbering: within each byte, bit 0 = LSB, bit 7 = MSB.
+    - Motorola: start_bit is the position of the signal MSB. Fill order:
+      MSB first, then step down within the byte (7 -> 0); when a byte is
+      exhausted, continue at bit 7 of the NEXT byte (byte index increases).
+    - Intel:    start_bit is the position of the signal LSB. Fill order:
+      LSB first, byte index increases.
     """
     positions = []
-    start_byte = start_bit // 8
-    start_bit_in_byte = start_bit % 8
+    # Motorola "network bit number": reverse bit order inside each byte,
+    # so bit 7 of a byte maps to the lowest network bit of that byte.
+    network_start = 8 * (start_bit // 8) + (7 - start_bit % 8)
 
     for i in range(length):
-        byte_ofs = i // 8
-        bit_ofs = i % 8
-
         if byte_order == "intel":
-            byte_idx = start_byte + byte_ofs
-            bit_in_byte = start_bit_in_byte + bit_ofs
-            if bit_in_byte >= 8:
-                byte_idx += 1
-                bit_in_byte -= 8
+            bitnum = start_bit + i
+            byte_idx = bitnum // 8
+            bit_in_byte = bitnum % 8
             shift = i  # LSB first
         else:  # motorola
-            byte_idx = start_byte - byte_ofs
-            bit_in_byte = start_bit_in_byte + bit_ofs
-            if bit_in_byte >= 8:
-                byte_idx += 1
-                bit_in_byte -= 8
+            bitnum = network_start + i
+            byte_idx = bitnum // 8
+            bit_in_byte = 7 - bitnum % 8
             shift = length - 1 - i  # MSB first
 
         positions.append((byte_idx, bit_in_byte, shift))
@@ -364,6 +359,34 @@ def simulate_dtc_check(seed: int | None = 42) -> dict:
     }
 
 
+# 中文信号名 -> DBC 规范要求的 ASCII 信号名（DBC 只支持英文/数字/下划线）
+_SIGNAL_NAME_EN = {
+    "节气门位置": "ThrottlePos",
+    "发动机转速": "EngineRPM",
+    "冷却液温度": "CoolantTemp",
+    "车速": "VehicleSpeed",
+    "进气歧管压力": "IntakePressure",
+    "总电压": "PackVoltage",
+    "电流": "PackCurrent",
+    "最高单体温度": "CellTempMax",
+    "最低单体温度": "CellTempMin",
+    "左前轮速": "WheelFL",
+    "右前轮速": "WheelFR",
+    "左后轮速": "WheelRL",
+    "右后轮速": "WheelRR",
+    "当前档位": "GearPos",
+    "变速箱油温": "TransOilTemp",
+    "输出轴转速": "OutputShaftRPM",
+    "左前门": "DoorFL",
+    "右前门": "DoorFR",
+    "左后门": "DoorRL",
+    "右后门": "DoorRR",
+    "近光灯": "LowBeam",
+    "远光灯": "HighBeam",
+    "转向灯": "TurnSignal",
+    "后备箱": "Trunk",
+}
+
 # 7. DBC 文件生成器
 # DBC 文件格式：Vector CAN 数据库标准，CANoe / CANalyzer 直接读取。
 
@@ -382,7 +405,7 @@ def generate_dbc(filepath: str = "simulated_ecu.dbc", baudrate: int = 500000) ->
     lines = []
     lines.append('VERSION ""\n')
     lines.append("\nNS_ : \n\tNS_DESC_\n\tCM_\n\tBA_DEF_\n\tBA_\n\tVAL_\n")
-    lines.append(f"\nBS_: {baudrate}\n")
+    lines.append("\nBS_:\n")
 
     # BU_: 节点列表
     lines.append(f"\nBU_: {' '.join(nodes)}\n")
@@ -394,7 +417,7 @@ def generate_dbc(filepath: str = "simulated_ecu.dbc", baudrate: int = 500000) ->
         lines.append(f"\nBO_ {can_id} {msg_name}: {dlc} {transmitter}")
 
         for sig in msg_def["signals"]:  # type: ignore[attr-defined]
-            sig_name = sig["name"].replace(" ", "_")
+            sig_name = _SIGNAL_NAME_EN.get(sig["name"], sig["name"].replace(" ", "_"))
             start = sig["start"]
             length = sig["len"]
             # DBC: @0 = Motorola (大端), @1 = Intel (小端)
@@ -405,7 +428,7 @@ def generate_dbc(filepath: str = "simulated_ecu.dbc", baudrate: int = 500000) ->
             min_val = 0
             max_val = round((1 << length) - 1)
             unit = sig["unit"] if sig["unit"] else ""
-            receivers = " ".join(n for n in nodes if n != transmitter) if len(nodes) > 1 else "Vector__XXX"
+            receivers = ",".join(n for n in nodes if n != transmitter) if len(nodes) > 1 else "Vector__XXX"
 
             lines.append(
                 f' SG_ {sig_name} : {start}|{length}@{byte_order}{signed} '
