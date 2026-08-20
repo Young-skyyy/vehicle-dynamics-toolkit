@@ -11,6 +11,7 @@ import struct
 from datetime import datetime
 
 from .uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
+from .ecu import CoreECU
 from .can_bus_load_demo import frame_bits as calc_frame_bits
 
 
@@ -168,65 +169,10 @@ def parse_can_frame(data: list[int], msg_def: dict) -> dict[str, float]:
 
 # 3. ECU 仿真器
 
-class VehicleECU:
-    """整车 ECU 状态机，维持车辆运行参数随时间连续变化。
-
-    Args:
-        seed: 随机种子，None = 不可复现，传入 int 可固定仿真结果
-    """
-
-    def __init__(self, seed: int | None = 42):
-        self._rng = random.Random(seed)
-        self.rpm = 800                              # 怠速
-        self.throttle = 0
-        self.speed = 0                              # km/h
-        self.coolant_temp = 25                      # 冷启动
-        self.gear = 0                               # P 档
-        self.soc = 80.0                             # 电池 SOC
-        self.brake_pressure = 0
-        self.accelerating = False
-
-    def update(self, dt_s):
-        """每 dt 秒更新一次车辆状态"""
-        # 模拟一个简单的驾驶循环
-        if not self.accelerating and self.speed <= 0:
-            self.accelerating = True
-            self.gear = 1
-        if self.speed >= 80:
-            self.accelerating = False
-
-        if self.accelerating:
-            self.throttle = min(80, self.throttle + self._rng.uniform(0, 10) * dt_s)
-            self.rpm += int(500 * dt_s)
-            self.speed += 3 * dt_s
-        else:
-            self.throttle = max(0, self.throttle - self._rng.uniform(5, 15) * dt_s)
-            self.rpm -= int(300 * dt_s)
-            self.speed = max(0, self.speed - 2 * dt_s)
-
-        self.rpm = max(800, min(6000, self.rpm))
-        self.speed = max(0, min(120, self.speed))
-        self.coolant_temp = min(95, self.coolant_temp + 0.5 * dt_s)
-        self.soc -= 0.001 * dt_s  # 缓慢放电
-
-        # 档位随车速变化
-        if self.speed > 60:
-            self.gear = 5
-        elif self.speed > 40:
-            self.gear = 4
-        elif self.speed > 25:
-            self.gear = 3
-        elif self.speed > 10:
-            self.gear = 2
-        elif self.speed > 0:
-            self.gear = 1
-        else:
-            self.gear = 0
-
-        self.brake_pressure = self._rng.uniform(0, 5) if not self.accelerating else 0
-
-
 # 4. CAN 帧信号生成器 —— 每个 ECU 类型一个独立函数，通过字典 dispatch
+
+# 兼容旧 CAN API；CAN、UDS、ROS2 适配器可共享同一核心实例。
+VehicleECU = CoreECU
 
 def _gen_engine_data(veh, sim_time):
     """EMS 发动机数据信号值"""

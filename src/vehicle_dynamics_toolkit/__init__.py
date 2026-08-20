@@ -53,6 +53,9 @@ from .lateral_dynamics import (
     calc_step_steer_response,
 )
 
+# ── ECU core ──
+from .ecu import CoreECU
+
 # ── CAN ──
 from .can_demo import (
     CAN_MESSAGES,
