@@ -55,6 +55,7 @@ from .lateral_dynamics import (
 
 # ── ECU core ──
 from .ecu import CoreECU
+from .fmu import build_fmu, model_description
 
 # ── CAN ──
 from .can_demo import (
