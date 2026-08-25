@@ -15,13 +15,13 @@ class CoreECU:
                  did_values: dict[int, float] | None = None):
         self.ecu_name = ecu_name
         self._rng = random.Random(seed)
-        self.rpm = 800
-        self.throttle = 0
-        self.speed = 0
-        self.coolant_temp = 25
+        self.rpm = 800.0
+        self.throttle = 0.0
+        self.speed = 0.0
+        self.coolant_temp = 25.0
         self.gear = 0
         self.soc = 80.0
-        self.brake_pressure = 0
+        self.brake_pressure = 0.0
         self.accelerating = False
         self.diagnostic = ECUDiagnosticServer(ecu_name, did_values or {
             0x000C: float(self.rpm),
