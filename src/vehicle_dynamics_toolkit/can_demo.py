@@ -8,7 +8,11 @@ from __future__ import annotations
 import time
 import random
 import struct
+import logging
 from datetime import datetime
+
+
+logger = logging.getLogger(__name__)
 
 from .uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
 from .ecu import CoreECU
@@ -461,6 +465,10 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
         if sim_time - last_report >= 1.0:
             load_pct = (total_bits / baudrate) / (sim_time + 0.001) * 100
             bus_load_samples.append((sim_time, load_pct))
+            logger.info(
+                "CAN 进度：t=%.2fs/%0.2fs, window_frames=%d, cumulative_load=%.2f%%",
+                sim_time, duration_s, frames_this_window, load_pct,
+            )
             frames_this_window = 0
             last_report = sim_time
 
@@ -471,6 +479,9 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
         asc_lines.append("End Triggerblock")
         with open(asc_log, "w", encoding="utf-8") as f:
             f.write("\n".join(asc_lines))
+        logger.info("ASC 日志已写入：%s（%d 行）", asc_log, len(asc_lines))
+    else:
+        logger.info("ASC 日志已禁用")
 
     # 生成 DBC
     dbc_info = generate_dbc()
@@ -485,6 +496,12 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logger.info("启动 CAN / ECU / UDS 演示")
     print("""
 ╔══════════════════════════════════════════════╗
 ║     CAN 总线多 ECU 仿真器                      ║
@@ -517,4 +534,5 @@ if __name__ == "__main__":
         0x0011: 35.0,     # 节气门位置
     })
     steps = run_diagnostic_session(ems_server)
+    logger.info("UDS 诊断会话完成：%d 个步骤，当前会话=%s", len(steps), ems_server.session)
     print_diagnostic_session(steps, ems_server)

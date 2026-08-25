@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Entry point for ``python -m vehicle_dynamics_toolkit`` — runs full demo."""
+import logging
+
 from .vehicle import (
     car_sedan, car_suv, car_truck,
     simulate_acceleration, calc_braking_table, calc_power_breakdown,
@@ -10,6 +12,13 @@ from .lateral_dynamics import (
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logger = logging.getLogger(__name__)
+    logger.info("开始车辆动力学演示")
     print("""
 ╔══════════════════════════════════════════════╗
 ║         车辆动力学仿真                         ║
@@ -18,6 +27,7 @@ def main():
     """)
 
     # ── 纵向动力学 ──
+    logger.info("阶段 1/2：计算纵向动力学（加速、制动、功率）")
     acc_result = simulate_acceleration(car_sedan, target_speed_kmh=100)
     print(f"  加速到 100 km/h: {acc_result['elapsed_s']:.1f}s, {acc_result['total_dist_m']:.0f}m")
 
@@ -31,6 +41,7 @@ def main():
         print(f"  {pb['vehicle_name']} @ {pb['speed_kmh']}km/h: 功率利用率 {pb['power_utilization_pct']:.1f}%")
 
     # ── 横向动力学 ──
+    logger.info("阶段 2/2：计算横向动力学（稳态转向、阶跃转向）")
     lat_data = analyze_lateral(car_sedan)
     print(f"\n  横向动力学: {lat_data['steer_type']} (Kus={lat_data['kus_deg_per_g']:.3f} deg/g)")
     print(f"  特征车速: {lat_data['characteristic_speed_kmh']:.0f} km/h")

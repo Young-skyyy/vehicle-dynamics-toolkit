@@ -1,4 +1,4 @@
-# Vehicle Dynamics Toolkit — CAN · UDS · Lateral Dynamics Simulation & Testing
+# Automotive Electronics Test Platform — CAN · UDS · Vehicle Dynamics Simulation
 
 [![pytest](https://github.com/Young-skyyy/vehicle-dynamics-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/Young-skyyy/vehicle-dynamics-toolkit/actions/workflows/test.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Star](https://img.shields.io/github/stars/Young-skyyy/vehicle-dynamics-toolkit?style=social)](https://github.com/Young-skyyy/vehicle-dynamics-toolkit)
 
-**A Python library + C++ ROS2 node for automotive software testing: CAN bus simulation with DBC export, ISO 14229 UDS diagnostic stack, and 2-DOF bicycle model with Pacejka Magic Formula tire model.**
+**An automotive electronics test platform built with Python, C++ and ROS2. It provides virtual CAN/ECU scenarios, ISO 14229 UDS diagnostic testing, vehicle-dynamics model validation, fault injection, cross-language comparison and automated regression through pytest and GitHub Actions.**
 
 ---
 
@@ -29,9 +29,9 @@
 Layer 2 C++ nodes port algorithms from Layer 1 Python models. Validation between layers uses [`scripts/compare_py_cpp.py`](scripts/compare_py_cpp.py): Python generates per-second reference JSON with the same default parameters as C++, then C++ output from recorded ROS2 bags is compared field-by-field against the reference. The C++ node measures real-time jitter to quantify timing deviations.
 
 ---
-## Engineering Depth — Three Implementation Details Worth Noticing
+## Test Strategy — Three Validation Decisions Worth Noticing
 
-While the module list above covers what this project does, these three specific implementation choices show real engineering consideration beyond a simple feature checklist.
+The following three examples show how the project turns protocol rules and model assumptions into executable checks, boundary coverage and regression evidence.
 
 ### 1. UDS SecurityAccess SPR Bit (ISO 14229-1 §9.5)
 
