@@ -217,6 +217,42 @@ class TestIsoTPReceiver:
         rx.reset()
         assert not rx.complete
 
+    def test_block_size_controls_follow_up_flow_control(self):
+        data = b"12345678901234567890"
+        frames = segment_payload(data)
+        rx = IsoTPReceiver(block_size=1)
+
+        _, fc = rx.feed(frames[0], timestamp_s=0.0)
+        assert parse_frame(fc).block_size == 1
+        _, fc = rx.feed(frames[1], timestamp_s=0.001)
+        assert parse_frame(fc).fc_flag == FlowControlFlag.CTS
+        _, fc = rx.feed(frames[2], timestamp_s=0.002)
+        assert fc is None
+
+    def test_st_min_rejects_consecutive_frame_arriving_too_early(self):
+        rx = IsoTPReceiver(st_min_ms=10)
+        rx.feed(build_first_frame(b"A" * 6, 13), timestamp_s=0.0)
+
+        result, fc = rx.feed(
+            build_consecutive_frame(b"B" * 7, 1),
+            timestamp_s=0.005,
+        )
+
+        assert result is None
+        assert parse_frame(fc).fc_flag == FlowControlFlag.OVERFLOW
+
+    def test_timeout_rejects_stalled_transfer(self):
+        rx = IsoTPReceiver(timeout_s=0.1)
+        rx.feed(build_first_frame(b"A" * 6, 13), timestamp_s=0.0)
+
+        result, fc = rx.feed(
+            build_consecutive_frame(b"B" * 7, 1),
+            timestamp_s=0.101,
+        )
+
+        assert result is None
+        assert parse_frame(fc).fc_flag == FlowControlFlag.OVERFLOW
+
 
 # ═══════════════════════════════════════
 # End-to-end Transfer Simulation
@@ -233,7 +269,7 @@ class TestSimulateTransfer:
         data = encode_test_vin()
         sender, responses = simulate_transfer(data)
         assert len(sender) == 3      # FF + 2 CF
-        assert len(responses) == 2   # FC(CTS) after FF + CF1
+        assert len(responses) == 1   # FC(CTS) after FF; block size 0 means unlimited
 
     def test_roundtrip_preserves_data(self):
         """模拟传输后接收端重组的数据应与原始一致"""

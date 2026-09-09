@@ -9,7 +9,7 @@ from .uds import ECUDiagnosticServer
 
 
 class CoreECU:
-    """可独立运行的虚拟 ECU 核心，统一维护状态和诊断端点。"""
+    """可独立运行的虚拟 ECU 核心，统一维护状态和诊断端点，供 Python、CAN 和 UDS 适配器共享。"""
 
     def __init__(self, ecu_name: str = "EMS", seed: int | None = 42,
                  did_values: dict[int, float] | None = None):

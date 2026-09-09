@@ -55,6 +55,9 @@ from .lateral_dynamics import (
 
 # ── ECU core ──
 from .ecu import CoreECU
+from .can_bus import CANBus, CANFrame
+from .diagnostic_tester import DiagnosticTester
+from .uds_can import CANDiagnosticTester, VirtualECUNode
 from .fmu import build_fmu, model_description
 
 # ── CAN ──

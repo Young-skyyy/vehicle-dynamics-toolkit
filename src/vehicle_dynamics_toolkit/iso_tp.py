@@ -192,25 +192,33 @@ def segment_payload(data: bytes) -> list[bytes]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class IsoTPReceiver:
-    """ISO-TP 接收端状态机。
+    """ISO-TP 接收端状态机，支持超时、Block Size 和 STmin。"""
 
-    接收 FF → 分配缓冲区 → 接收 CF → 全部收齐后返回完整 payload。
-    同时生成 FC 帧供调用者发送回发送端。
-    """
-
-    def __init__(self):
+    def __init__(self, block_size: int = 0, st_min_ms: int = 0,
+                 timeout_s: float = 1.0):
+        if not 0 <= block_size <= 255:
+            raise ValueError("Block Size must be between 0 and 255")
+        if not 0 <= st_min_ms <= 255:
+            raise ValueError("STmin must be between 0 and 255 ms")
+        if timeout_s <= 0:
+            raise ValueError("ISO-TP timeout must be positive")
+        self.block_size = block_size
+        self.st_min_ms = st_min_ms
+        self.timeout_s = timeout_s
         self._buffer = bytearray()
         self._expected_length = 0
         self._received_length = 0
         self._expected_seq = 0
+        self._block_received = 0
         self._complete = False
+        self._last_timestamp_s: float | None = None
 
     @property
     def complete(self) -> bool:
         return self._complete
 
-    def feed(self, raw_frame: bytes) -> tuple[bytes | None, bytes | None]:
-        """喂入一个 ISO-TP CAN 帧 payload。
+    def feed(self, raw_frame: bytes, timestamp_s: float = 0.0) -> tuple[bytes | None, bytes | None]:
+        """喂入一个 ISO-TP CAN 帧 payload，并检查传输时序。
 
         Args:
             raw_frame: CAN 帧 data（含 PCI 字节）
@@ -221,21 +229,34 @@ class IsoTPReceiver:
             - flow_control_frame: 需发回的 FC 帧（CTS/WAIT/Overflow），不需要时为 None
         """
         frame = parse_frame(raw_frame)
+        if (self._last_timestamp_s is not None
+                and timestamp_s - self._last_timestamp_s > self.timeout_s):
+            self.reset()
+            return None, build_flow_control(FlowControlFlag.OVERFLOW)
 
         if frame.frame_type == FrameType.SINGLE:
             self._complete = True
+            self._last_timestamp_s = timestamp_s
             return frame.payload, None
 
         elif frame.frame_type == FrameType.FIRST:
             # 开始新的多帧接收
             self._buffer = bytearray(frame.payload)
+            if frame.total_length is None:
+                raise ValueError("First Frame must include total length")
             self._expected_length = frame.total_length
             self._received_length = len(frame.payload)
             self._expected_seq = 1  # 下一个期望的 CF 序号
+            self._block_received = 0
             self._complete = False
+            self._last_timestamp_s = timestamp_s
 
             # 发送 Flow Control: Continue To Send
-            fc = build_flow_control(FlowControlFlag.CTS, block_size=0, st_min_ms=0)
+            fc = build_flow_control(
+                FlowControlFlag.CTS,
+                block_size=self.block_size,
+                st_min_ms=self.st_min_ms,
+            )
             return None, fc
 
         elif frame.frame_type == FrameType.CONSECUTIVE:
@@ -244,18 +265,30 @@ class IsoTPReceiver:
                 fc = build_flow_control(FlowControlFlag.OVERFLOW)
                 self._complete = True
                 return None, fc
+            if (self.st_min_ms
+                    and self._last_timestamp_s is not None
+                    and timestamp_s - self._last_timestamp_s < self.st_min_ms / 1000):
+                self.reset()
+                return None, build_flow_control(FlowControlFlag.OVERFLOW)
 
             self._buffer.extend(frame.payload)
             self._received_length += len(frame.payload)
             self._expected_seq = (self._expected_seq + 1) & 0x0F
+            self._block_received += 1
+            self._last_timestamp_s = timestamp_s
 
             if self._received_length >= self._expected_length:
                 self._complete = True
                 return bytes(self._buffer[:self._expected_length]), None
-            else:
-                # 每收到 1 帧 CF 就回复一次 CTS
-                fc = build_flow_control(FlowControlFlag.CTS, st_min_ms=0)
+            if self.block_size and self._block_received >= self.block_size:
+                self._block_received = 0
+                fc = build_flow_control(
+                    FlowControlFlag.CTS,
+                    block_size=self.block_size,
+                    st_min_ms=self.st_min_ms,
+                )
                 return None, fc
+            return None, None
 
         else:
             # Flow Control — 不应该由接收端收到
@@ -267,7 +300,9 @@ class IsoTPReceiver:
         self._expected_length = 0
         self._received_length = 0
         self._expected_seq = 0
+        self._block_received = 0
         self._complete = False
+        self._last_timestamp_s = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -10,12 +10,14 @@ import random
 import struct
 import logging
 from datetime import datetime
+from typing import cast
 
 
 logger = logging.getLogger(__name__)
 
 from .uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
 from .ecu import CoreECU
+from .can_bus import CANBus, CANFrame
 from .can_bus_load_demo import frame_bits as calc_frame_bits
 
 
@@ -249,12 +251,30 @@ def simulate_can_bus(duration_s: float = 5) -> dict:
         }
     """
     veh = VehicleECU()
+    bus = CANBus()
     dt = 0.01  # 10ms 主循环步长
     total_steps = int(duration_s / dt)
 
     timers = {name: 0.0 for name in CAN_MESSAGES}
-    msg_count = 0
     frames = []
+
+    def receive_frame(name: str, msg_def: dict, frame: CANFrame) -> None:
+        frames.append({
+            "time_s": round(frame.timestamp_s, 4),
+            "id": frame.can_id,
+            "name": name,
+            "signals": parse_can_frame(list(frame.data), msg_def),
+            "data": list(frame.data),
+        })
+
+    for name, msg_def in CAN_MESSAGES.items():
+        can_id = cast(int, msg_def["id"])
+
+        def receiver(frame: CANFrame, message_name: str = name,
+                     definition: dict = msg_def) -> None:
+            receive_frame(message_name, definition, frame)
+
+        bus.subscribe(can_id, receiver)
 
     for step in range(total_steps):
         sim_time = step * dt
@@ -265,19 +285,11 @@ def simulate_can_bus(duration_s: float = 5) -> dict:
             if timers[name] >= msg_def["cycle_ms"]:  # type: ignore[operator]
                 timers[name] -= msg_def["cycle_ms"]  # type: ignore[operator]
                 frame_data = generate_frame(name, msg_def, veh, sim_time)
-                parsed = parse_can_frame(frame_data, msg_def)
-                frames.append({
-                    "time_s": round(sim_time, 4),
-                    "id": msg_def["id"],
-                    "name": name,
-                    "signals": parsed,
-                    "data": frame_data,
-                })
-                msg_count += 1
+                bus.send(CANFrame(cast(int, msg_def["id"]), bytes(frame_data), sim_time))
 
     return {
         "duration_s": duration_s,
-        "total_messages": msg_count,
+        "total_messages": len(frames),
         "frames": frames,
     }
 
