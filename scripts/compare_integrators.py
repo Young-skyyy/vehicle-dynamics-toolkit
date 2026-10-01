@@ -21,7 +21,7 @@ def main():
     
     print("=" * 75)
     print("  欧拉积分 vs RK4 — 阶跃转向瞬态响应对比")
-    print("  工况: 80 km/h, 方向盘 3°, dt=0.01s, duration=3s")
+    print("  工况: 80 km/h, 前轮 3°, dt=0.01s, duration=3s")
     print("=" * 75)
     
     # 稳态理论值

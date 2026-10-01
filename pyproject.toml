@@ -46,6 +46,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",
+    "cantools>=39.0",
 ]
 
 [project.scripts]

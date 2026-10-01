@@ -97,7 +97,7 @@ def get_engine_torque(rpm: float, throttle: float,
     rpms = list(torque_curve.keys())
     rpm = max(rpms[0], min(rpm, rpms[-1]))
     max_tq = _interp_torque_curve(rpm, torque_curve)
-    return max(0.0, throttle * max_tq)
+    return max(0.0, min(1.0, throttle)) * max_tq
 
 
 class Vehicle:
@@ -307,13 +307,18 @@ def calc_wheel_force(vehicle: Vehicle, speed_ms: float,
         throttle:     油门开度 0~1，默认 1.0（全油门）
         gear_override: 强制档位，0 = 自动选档
     """
-    if speed_ms <= 0.1:
-        return 0.0
-
+    if not math.isfinite(speed_ms) or speed_ms < 0:
+        raise ValueError("speed_ms must be finite and non-negative")
     speed_kmh = speed_ms * MS_TO_KMH
     gear = gear_override if gear_override > 0 else vehicle.select_gear(speed_kmh)
+    # Simplified slipping clutch: first gear and idle torque at standstill.
+    # This supplies launch torque without inventing a nonzero initial speed.
+    if gear == 0 and throttle > 0:
+        gear = 1
     if gear == 0:
         return 0.0
+    if gear > len(vehicle.gear_ratios):
+        raise ValueError("gear_override exceeds the available gears")
 
     gear_ratio = vehicle.gear_ratios[gear - 1]
     total_ratio = gear_ratio * vehicle.final_drive
@@ -332,33 +337,55 @@ def calc_wheel_force(vehicle: Vehicle, speed_ms: float,
 
 def calc_acceleration(vehicle: Vehicle, speed_ms: float,
                       throttle: float = 1.0,
-                      gear_override: int = 0) -> float:
+                      gear_override: int = 0, brake: float = 0.0) -> float:
     """计算车辆在当前速度下的加速度（m/s²）。
 
     基于发动机扭矩曲线 + 变速箱速比，替代原来简化的 P=Fv 模型。
     """
     resistance = calc_resistance(vehicle, speed_ms)
     wheel_force = calc_wheel_force(vehicle, speed_ms, throttle, gear_override)
-    net_force = wheel_force - resistance
-    return max(0.0, net_force / vehicle.mass)
+    brake_force = max(0.0, min(1.0, brake)) * vehicle.mass * G * 0.8
+    acceleration = (wheel_force - resistance - brake_force) / vehicle.mass
+    # Resistive forces cannot propel a stationary car backwards.
+    return max(0.0, acceleration) if speed_ms == 0 else acceleration
+
+
+def _validate_time_grid(dt: float, duration: float) -> None:
+    if not math.isfinite(dt) or dt <= 0:
+        raise ValueError("dt must be finite and positive")
+    if not math.isfinite(duration) or duration < 0:
+        raise ValueError("duration must be finite and non-negative")
+
+
+def _advance_speed(speed: float, acceleration: float, dt: float) -> tuple[float, float]:
+    """Ballistic update, resolving a stop inside the interval (no reverse motion)."""
+    moving_time = min(dt, -speed / acceleration) if acceleration < 0 else dt
+    distance = speed * moving_time + 0.5 * acceleration * moving_time ** 2
+    return max(0.0, speed + acceleration * dt), max(0.0, distance)
 
 
 def simulate_acceleration(vehicle: Vehicle, target_speed_kmh: float = 100,
-                          dt: float = 0.1) -> dict:
-    """模拟车辆从 0 全油门加速到目标速度，含自动换挡。"""
+                          dt: float = 0.1, max_time_s: float = 120) -> dict:
+    """从静止全油门加速；status 明确区分 reached_target 和 timeout。
+
+    起步采用怠速扭矩 + 简化滑动离合器，不代表实车起步标定。
+    """
+    _validate_time_grid(dt, max_time_s)
+    if not math.isfinite(target_speed_kmh) or target_speed_kmh < 0:
+        raise ValueError("target_speed_kmh must be finite and non-negative")
     target = target_speed_kmh * KMH_TO_MS
-    speed = 1.5  # m/s，~5 km/h 起步
+    speed = 0.0
     distance = 0.0
     time_elapsed = 0.0
     gear = 1
     shift_rpm = vehicle.max_rpm * 0.92  # 92% 红线换挡
 
-    time_series: list[float] = []
-    speed_series: list[float] = []
-    acc_series: list[float] = []
-    dist_series: list[float] = []
+    time_series: list[float] = [0.0]
+    speed_series: list[float] = [0.0]
+    acc_series: list[float] = [calc_acceleration(vehicle, 0.0)]
+    dist_series: list[float] = [0.0]
 
-    while speed < target and time_elapsed < 120:
+    while speed < target and time_elapsed < max_time_s - 1e-12:
         # 计算当前档位下的发动机转速
         total_ratio = vehicle.gear_ratios[gear - 1] * vehicle.final_drive
         wheel_rps = speed / (2 * math.pi * vehicle.wheel_radius)
@@ -369,9 +396,14 @@ def simulate_acceleration(vehicle: Vehicle, target_speed_kmh: float = 100,
             gear += 1
 
         acc = calc_acceleration(vehicle, speed, throttle=1.0, gear_override=gear)
-        speed += acc * dt
-        distance += speed * dt
-        time_elapsed += dt
+        h = min(dt, max_time_s - time_elapsed)
+        if acc > 0:
+            h = min(h, (target - speed) / acc)
+        speed, step_distance = _advance_speed(speed, acc, h)
+        distance += step_distance
+        time_elapsed += h
+        if abs(speed - target) < 1e-10:
+            speed = target
 
         time_series.append(round(time_elapsed, 2))
         speed_series.append(round(speed * MS_TO_KMH, 2))
@@ -385,6 +417,8 @@ def simulate_acceleration(vehicle: Vehicle, target_speed_kmh: float = 100,
         "distance_m": dist_series,
         "elapsed_s": round(time_elapsed, 1),
         "total_dist_m": round(distance, 1),
+        "reached_target": speed >= target,
+        "status": "reached_target" if speed >= target else "timeout",
     }
 
 
@@ -482,7 +516,7 @@ def idm_acceleration(v_ego: float, v_leader: float, gap: float,
         v_ego:    自车速度 (m/s)
         v_leader: 前车速度 (m/s)
         gap:      实际间距 (m)
-        v0:       期望速度 (m/s)，默认取 v_leader（跟车模式）
+        v0:       期望速度 (m/s)，默认 30 m/s（自由巡航目标，与前车速度独立）
         T:        安全时距 (s)
         s0:       最小停车间距 (m)
         a:        最大加速度 (m/s²)
@@ -493,19 +527,25 @@ def idm_acceleration(v_ego: float, v_leader: float, gap: float,
         float: 加速度 (m/s²)，正值加速、负值减速
     """
     if v0 is None:
-        v0 = v_leader  # 跟车模式下期望速度 = 前车速度
+        v0 = 30.0  # desired free-road speed, independent of the leading car
+
+    if not all(math.isfinite(x) for x in (v_ego, v_leader, gap, v0, T, s0, a, b)):
+        raise ValueError("IDM inputs must be finite")
+    if min(v_ego, v_leader, v0, T, s0) < 0 or a <= 0 or b <= 0 or delta <= 0:
+        raise ValueError("invalid IDM speed or model parameters")
 
     if v_ego <= 0 and v0 <= 0:
         return 0.0
 
-    v_ego = max(v_ego, 0.01)  # 避免除零
+    if v0 == 0:
+        return -b  # explicit stop request, not a near-zero denominator
     dv = v_ego - v_leader      # 速度差，正值 = 自车更快（接近前车）
 
     # 期望安全间距
     s_star = s0 + max(0, v_ego * T + v_ego * dv / (2 * math.sqrt(a * b)))
 
     # 自由加速项
-    free_road = 1.0 - (v_ego / max(v0, 0.1)) ** delta
+    free_road = 1.0 - (v_ego / v0) ** delta
 
     # 交互制动项
     interaction = (s_star / max(gap, 0.1)) ** 2
@@ -513,142 +553,102 @@ def idm_acceleration(v_ego: float, v_leader: float, gap: float,
     return a * (free_road - interaction)
 
 
+def _following_history(lead_profile: list[tuple[float, float]],
+                       follower_kmh: float, gap_m: float, dt: float,
+                       desired_kmh: float, max_deceleration: float) -> dict:
+    """IDM controller + bounded longitudinal actuator; all samples are at t_i.
+
+    Commands apply over [t_i, t_i+1]. Negative gaps are retained as collision
+    evidence; the model never teleports a car to maintain a positive gap.
+    """
+    if len(lead_profile) < 2 or lead_profile[0][0] != 0:
+        raise ValueError("lead_profile needs at least two points starting at t=0")
+    if any(not math.isfinite(t) or not math.isfinite(v) or v < 0
+           for t, v in lead_profile):
+        raise ValueError("profile times and speeds must be finite; speeds >= 0")
+    if any(b[0] <= a[0] for a, b in zip(lead_profile, lead_profile[1:])):
+        raise ValueError("profile times must be strictly increasing")
+    duration = lead_profile[-1][0]
+    _validate_time_grid(dt, duration)
+    if (not all(math.isfinite(x) for x in
+                (follower_kmh, gap_m, desired_kmh, max_deceleration))
+            or min(follower_kmh, desired_kmh, gap_m) < 0 or max_deceleration <= 0):
+        raise ValueError("invalid following scenario parameters")
+    steps = max(1, math.ceil(duration / dt - 1e-12))
+    times = [i * dt for i in range(steps)] + [duration]
+    lead_speeds = []
+    segment = 0
+    for t in times:
+        while segment < len(lead_profile) - 2 and t > lead_profile[segment + 1][0]:
+            segment += 1
+        t0, v0 = lead_profile[segment]
+        t1, v1 = lead_profile[segment + 1]
+        lead_speeds.append((v0 + (v1 - v0) * (t - t0) / (t1 - t0)) * KMH_TO_MS)
+    result: dict = {key: [] for key in
+                    ("time", "gap_m", "follower_kmh", "leader_kmh", "acc_ms2")}
+    result["collision_s"] = None
+    speed = follower_kmh * KMH_TO_MS
+    gap = gap_m
+    for i, t in enumerate(times):
+        command = idm_acceleration(speed, lead_speeds[i], gap,
+                                   v0=desired_kmh * KMH_TO_MS)
+        command = max(-max_deceleration, min(1.4, command))
+        if speed == 0:
+            command = max(0.0, command)
+        result["time"].append(t)
+        result["gap_m"].append(gap)
+        result["follower_kmh"].append(speed * MS_TO_KMH)
+        result["leader_kmh"].append(lead_speeds[i] * MS_TO_KMH)
+        result["acc_ms2"].append(command)
+        if gap <= 0 and result["collision_s"] is None:
+            result["collision_s"] = t
+        if i + 1 < len(times):
+            h = times[i + 1] - t
+            speed, distance = _advance_speed(speed, command, h)
+            gap += 0.5 * (lead_speeds[i] + lead_speeds[i + 1]) * h - distance
+    return result
+
+
 def car_following_simulation(lead_speed_kmh: float = 60,
                              follower_speed_kmh: float = 70,
                              initial_gap_m: float = 30,
                              duration_s: float = 30,
-                             dt: float = 0.1) -> dict:
-    """IDM 跟车仿真：前车匀速，后车用 IDM 跟随。
+                             dt: float = 0.1,
+                             desired_speed_kmh: float = 80,
+                             max_deceleration: float = 8.0) -> dict:
+    """Constant-speed lead car; desired cruise speed is independent of it.
 
-    Returns:
-        dict: {time, gap_m, follower_kmh, leader_kmh, acc_ms2, status, collision_s}
+    max_deceleration is a simplified actuator limit (m/s²), not IDM's
+    comfortable-deceleration parameter b. Collision is not guaranteed absent.
     """
-    lead_speed = lead_speed_kmh * KMH_TO_MS
-    follower_speed = follower_speed_kmh * KMH_TO_MS
-
-    lead_pos = 0.0
-    follower_pos = -initial_gap_m
-    gap = initial_gap_m
-
-    time_series: list[float] = []
-    gap_series: list[float] = []
-    speed_series: list[float] = []
-    acc_series: list[float] = []
-    status_series: list[str] = []
-    collision_time: float | None = None
-
-    t = 0.0
-    while t <= duration_s:
-        # IDM 加速度
-        acc = idm_acceleration(follower_speed, lead_speed, gap,
-                               v0=lead_speed, T=1.5, s0=2.0, a=1.4, b=2.0)
-
-        # 欧拉积分更新
-        follower_speed = max(0.0, follower_speed + acc * dt)
-        lead_pos += lead_speed * dt
-        follower_pos += follower_speed * dt
-        gap = lead_pos - follower_pos
-
-        # 状态判定
-        if gap > 15:
-            status = "安全"
-        elif gap > 5:
-            status = "警告"
-        else:
-            status = "危险！"
-
-        time_series.append(round(t, 2))
-        gap_series.append(round(gap, 1))
-        speed_series.append(round(follower_speed * MS_TO_KMH, 1))
-        acc_series.append(round(acc, 3))
-        status_series.append(status)
-
-        if gap <= 0 and collision_time is None:
-            collision_time = round(t, 2)
-
-        t += dt
-
-    return {
-        "time": time_series,
-        "gap_m": gap_series,
-        "follower_kmh": speed_series,
-        "leader_kmh": lead_speed_kmh,
-        "acc_ms2": acc_series,
-        "status": status_series,
-        "collision_s": collision_time,
-    }
+    _validate_time_grid(dt, duration_s)
+    # A tiny positive profile horizon also allows an initial-state-only request.
+    result = _following_history([(0, lead_speed_kmh),
+                                 (duration_s if duration_s > 0 else dt, lead_speed_kmh)],
+                                follower_speed_kmh, initial_gap_m, dt,
+                                desired_speed_kmh, max_deceleration)
+    if duration_s == 0:
+        for key in ("time", "gap_m", "follower_kmh", "leader_kmh", "acc_ms2"):
+            result[key] = result[key][:1]
+        result["collision_s"] = 0.0 if initial_gap_m == 0 else None
+    result["leader_kmh"] = lead_speed_kmh
+    result["status"] = ["安全" if gap > 15 else "警告" if gap > 5 else "危险！"
+                        for gap in result["gap_m"]]
+    return result
 
 
 def acc_simulation(lead_profile: list[tuple[float, float]] | None = None,
                    follower_v0_kmh: float = 50,
                    initial_gap_m: float = 40,
-                   dt: float = 0.1) -> dict:
-    """ACC 场景仿真：前车做变速工况，后车用 IDM 自适应巡航。
+                   dt: float = 0.1,
+                   desired_speed_kmh: float = 80,
+                   max_deceleration: float = 8.0) -> dict:
+    """ACC with a separate cruise setpoint and bounded acceleration.
 
-    Args:
-        lead_profile: 前车速度曲线 [(时间s, 速度km/h), ...]，默认：加速→巡航→减速
-        follower_v0_kmh: 后车初始速度 (km/h)
-        initial_gap_m: 初始间距 (m)
-
-    Returns:
-        dict: {time, gap_m, follower_kmh, leader_kmh, acc_ms2}
+    lead_profile contains (time_s, speed_kmh). The first sample is the true
+    initial state; the stopped leader never becomes a zero cruise setpoint.
     """
     if lead_profile is None:
-        # 默认工况：前车 0→80 加速，80 巡航，80→0 减速
-        lead_profile = [
-            (0, 0), (5, 40), (10, 80), (20, 80), (30, 40), (35, 0),
-        ]
-
-    # 构建前车逐秒速度曲线（线性插值）
-    total_time = lead_profile[-1][0]
-    steps = int(total_time / dt)
-    lead_speeds: list[float] = []
-    seg_idx = 0
-    for i in range(steps + 1):
-        sim_time = i * dt
-        while seg_idx < len(lead_profile) - 2 and sim_time > lead_profile[seg_idx + 1][0]:
-            seg_idx += 1
-        t0, v0 = lead_profile[seg_idx]
-        t1, v1 = lead_profile[seg_idx + 1]
-        duration = t1 - t0
-        ratio = (sim_time - t0) / duration if duration > 0 else 1.0
-        lead_speeds.append(max(0, v0 + (v1 - v0) * ratio) * KMH_TO_MS)
-
-    follower_speed = follower_v0_kmh * KMH_TO_MS
-    lead_pos = 0.0
-    follower_pos = -initial_gap_m
-
-    time_series: list[float] = []
-    gap_series: list[float] = []
-    follower_spd: list[float] = []
-    leader_spd: list[float] = []
-    acc_series: list[float] = []
-
-    for i in range(steps + 1):
-        sim_time = i * dt
-        lead_v = lead_speeds[i]
-
-        # 前车期望速度（IDM 用前车当前速度作为 v0，模拟跟车）
-        gap = lead_pos - follower_pos
-        # 如果前车太远（gap > 100m），切换到自由巡航模式
-        v_desired = lead_v if gap < 100 else follower_v0_kmh * KMH_TO_MS
-        acc = idm_acceleration(follower_speed, lead_v, gap,
-                               v0=v_desired, T=1.5, s0=2.0, a=1.4, b=2.0)
-
-        follower_speed = max(0.0, follower_speed + acc * dt)
-        lead_pos += lead_v * dt
-        follower_pos += follower_speed * dt
-
-        time_series.append(round(sim_time, 2))
-        gap_series.append(round(lead_pos - follower_pos, 1))
-        follower_spd.append(round(follower_speed * MS_TO_KMH, 1))
-        leader_spd.append(round(lead_v * MS_TO_KMH, 1))
-        acc_series.append(round(acc, 3))
-
-    return {
-        "time": time_series,
-        "gap_m": gap_series,
-        "follower_kmh": follower_spd,
-        "leader_kmh": leader_spd,
-        "acc_ms2": acc_series,
-    }
+        lead_profile = [(0, 0), (5, 40), (10, 80), (20, 80), (30, 40), (35, 0)]
+    return _following_history(lead_profile, follower_v0_kmh, initial_gap_m,
+                              dt, desired_speed_kmh, max_deceleration)

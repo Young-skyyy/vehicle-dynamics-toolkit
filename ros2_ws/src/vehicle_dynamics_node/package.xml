@@ -3,7 +3,7 @@
 <package format="3">
   <name>vehicle_dynamics_node</name>
   <version>0.4.0</version>
-  <description>C++ 车辆动力学仿真节点：纵向 + 横向 + 换挡 + Pacejka</description>
+  <description>C++ 车辆动力学仿真节点：纵向 + 线性横向 + 换挡 + 自动对比</description>
   <maintainer email="young-skyyy@users.noreply.github.com">mnq</maintainer>
   <license>MIT</license>
 

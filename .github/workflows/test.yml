@@ -1,6 +1,6 @@
 name: test + mypy + ROS2
 
-on: push
+on: [push, pull_request]
 
 jobs:
   # ── Python 测试 ──
@@ -42,8 +42,8 @@ jobs:
       - name: Type check
         run: python -m mypy --ignore-missing-imports src/vehicle_dynamics_toolkit/
 
-  # ── 生成 Python 参考输出 (供 C++ 对比) ──
-  generate-ref:
+  # ── 真正编译、运行、逐样本比较 C++ 与 Python ──
+  dynamics-parity:
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -57,14 +57,21 @@ jobs:
       - name: Install package
         run: pip install -e .
 
-      - name: Generate Python reference
-        run: python scripts/compare_py_cpp.py --generate --output py_ref.json
+      - name: Compile and compare the ROS2 dynamics core
+        run: python scripts/compare_py_cpp.py --check
 
-      - name: Upload reference artifact
+      - name: Upload comparison evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: py-reference-output
-          path: py_ref.json
+          name: dynamics-parity
+          path: build/parity/*.csv
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dynamics-parity-report
+          path: build/parity/report.json
 
   # ── ROS2 C++ 编译 ──
   ros2-build:
@@ -78,17 +85,27 @@ jobs:
           sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
           sudo apt update
-          sudo apt install -y ros-humble-ros-base python3-colcon-common-extensions
+          sudo apt install -y ros-humble-ros-base ros-humble-ament-lint-auto ros-humble-ament-lint-common python3-colcon-common-extensions
 
       - name: Build ROS2 packages
         run: |
           source /opt/ros/humble/setup.bash
           cd ros2_ws
-          colcon build --symlink-install --packages-up-to vehicle_dynamics_node 2>&1 | tail -20
+          colcon build --symlink-install --packages-up-to vehicle_dynamics_node uds_server
 
       - name: Verify binaries exist
         run: |
-          test -f ros2_ws/build/vehicle_dynamics_node/vehicle_dynamics_node || \
-          test -f ros2_ws/install/vehicle_dynamics_node/lib/vehicle_dynamics_node/vehicle_dynamics_node || \
-          echo "WARNING: binary not found (expected on ROS2 runner)"
-          echo "Build completed - C++ compilation verified"
+          test -x ros2_ws/install/vehicle_dynamics_node/lib/vehicle_dynamics_node/dynamics_node
+          test -x ros2_ws/install/vehicle_dynamics_node/lib/vehicle_dynamics_node/dynamics_runner
+          test -x ros2_ws/install/uds_server/lib/uds_server/uds_server_node
+
+      - name: Compare the runner built by the ROS2 package
+        run: |
+          python3 -m pip install -e .
+          python3 scripts/compare_py_cpp.py --check --runner ros2_ws/install/vehicle_dynamics_node/lib/vehicle_dynamics_node/dynamics_runner --output build/ros2-parity
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ros2-parity-report
+          path: build/ros2-parity/report.json

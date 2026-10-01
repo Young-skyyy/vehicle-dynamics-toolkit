@@ -201,10 +201,10 @@ class TestBrakingDistance:
 # calc_acceleration — F = ma physics
 
 class TestAcceleration:
-    def test_zero_at_standstill(self, sedan):
-        """v=0 时轮端驱动力为 0，加速度应为 0。"""
-        acc = calc_acceleration(sedan, 0)
-        assert acc == 0
+    def test_launch_at_standstill(self, sedan):
+        """Applied throttle supplies launch torque through the slipping clutch."""
+        assert calc_acceleration(sedan, 0, throttle=1) > 0
+        assert calc_acceleration(sedan, 0, throttle=0) == 0
 
     def test_decreases_with_speed(self, sedan):
         """高速时空气阻力增大 + 高挡扭矩降低 → 加速度下降。"""
@@ -241,8 +241,9 @@ class TestWheelForce:
         force = calc_wheel_force(sedan, 8, throttle=1.0)
         assert force > 0, "应有驱动力"
 
-    def test_zero_speed_zero_force(self, sedan):
-        assert calc_wheel_force(sedan, 0) == 0.0
+    def test_zero_speed_launch_force(self, sedan):
+        assert calc_wheel_force(sedan, 0, throttle=1) > 0
+        assert calc_wheel_force(sedan, 0, throttle=0) == 0.0
 
     def test_partial_throttle_lower_force(self, sedan):
         f_wot = calc_wheel_force(sedan, 10, throttle=1.0)

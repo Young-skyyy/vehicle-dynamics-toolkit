@@ -7,13 +7,13 @@ float64 ax              # 纵向加速度 m/s²
 
 # 横向
 float64 vy              # 侧向速度 m/s
-float64 ay              # 侧向加速度 m/s²
+float64 ay              # 实际车体侧向加速度 dvy/dt + vx*yaw_rate, m/s²
 float64 yaw_rate        # 横摆角速度 rad/s
 float64 steer_angle     # 前轮转角 rad
 
 # 位置
-float64 position_x      # 纵向位移 m
-float64 position_y      # 侧向位移 m
+float64 position_x      # 世界坐标 x, m
+float64 position_y      # 世界坐标 y, m
 float64 heading         # 航向角 rad
 
 # 动力总成
