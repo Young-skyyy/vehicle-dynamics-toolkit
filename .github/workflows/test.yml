@@ -101,7 +101,7 @@ jobs:
 
       - name: Compare the runner built by the ROS2 package
         run: |
-          python3 -m pip install -e .
+          python3 -m pip install .
           python3 scripts/compare_py_cpp.py --check --runner ros2_ws/install/vehicle_dynamics_node/lib/vehicle_dynamics_node/dynamics_runner --output build/ros2-parity
 
       - uses: actions/upload-artifact@v4
