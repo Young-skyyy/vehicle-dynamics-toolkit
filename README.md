@@ -13,6 +13,12 @@
 
 ## Architecture
 
+- **Physical plant:** `simulation.py` / `vehicle.py` / `lateral_dynamics.py`, with SI state and normalized controls; C++ replay shares the ROS2 core.
+- **Protocol fixture:** `signal_model.py` generates synthetic ECU signals; `CoreECU` adds a simulation clock and UDS facade. It is not the calibrated physical plant.
+- **Transport:** `can_codec.py` owns encoding, `CANBus` delivers timestamp-ordered events, and `IsoTPChannel` owns segmentation, flow control and reassembly on both sides. UDS receives complete payloads.
+- **Scenarios and outputs:** `can_demo.py` composes those components. Pass `asc_log=None, dbc_path=None` for an advanced run without output files.
+- **Native FMU:** a separate experimental C signal model, packaged with the wheel. Its behavior is not covered by Python/C++ dynamics parity.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Layer 1 — Python Analysis & Simulation                         │
@@ -28,7 +34,7 @@
 
 The ROS2 dynamics node and a headless C++ replay executable share `dynamics.hpp`. Run `python scripts/compare_py_cpp.py --check` to compile that core, replay identical control samples in C++ and Python, and compare every output sample. Six maneuvers at two step sizes cover launch, coast, braking, left/right steering and braking to rest while turning. Missing samples, non-finite values, misaligned timestamps or excessive error fail the command and CI. This verifies the default linear-tire dynamics core, not ROS transport timing, UDS, FMU or real-vehicle accuracy.
 
-See [dynamics validation and model limits](docs/dynamics_validation.md). 新手从[项目学习路线](docs/LEARNING_ROUTE.zh-CN.md)开始，并使用[学习进度文件](docs/LEARNING_PROGRESS.zh-CN.md)保持跨对话连续性。
+See [dynamics validation and model limits](docs/dynamics_validation.md) and [module boundaries, units and simulation time](docs/architecture.md).
 
 ---
 ## Test Strategy — Three Validation Decisions Worth Noticing

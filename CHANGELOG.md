@@ -1,12 +1,21 @@
 # Changelog
 
+## 2026-10-04 — Simulation and protocol boundaries
+
+- Add configurable DID definitions, ECU-local DTC injection/clearing and explicit throttle/brake controls.
+- Extract protocol-free signal model and CAN codec; document state/control units.
+- Share simulation time across ECU, CAN and UDS; isolate model/noise/fault RNG streams.
+- Queue CAN delivery; share ISO-TP RX/TX ownership with bidirectional flow control.
+- Route advanced scenarios through the bus and support silent output mode.
+- Package native FMU source in wheels and exercise compilation/load/step/reset in CI.
+
 ## [Unreleased]
 
 - Corrected true-rest launch, signed coasting acceleration, stopping distance and explicit target-timeout status.
 - Separated ACC cruise setpoint from lead speed; bounded the actuator and retained collision evidence.
 - Corrected mirrored-turn radius, zero-speed handling and transient physical lateral acceleration; added low-speed integration substeps.
 - Extracted the C++ core used by ROS2 and added executable Python/C++ parity checks (12 cases, every sample, failure exit codes), plus CI gates.
-- Added physics and comparator regression tests, beginner learning route and persistent progress template.
+- Added physics and comparator regression tests.
 - Published the newly exposed Camry/Tiguan acceleration benchmark failures without loosening tolerances.
 
 ## [3.0.0] — 2026-08-10

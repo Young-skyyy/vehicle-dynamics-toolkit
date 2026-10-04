@@ -15,6 +15,7 @@ from vehicle_dynamics_toolkit.uds import (
     DTC_DATABASE,
     DiagnosticSession,
     ECUDiagnosticServer,
+    DIDDefinition,
     POSITIVE_RESPONSE_OFFSET,
     NEGATIVE_RESPONSE_SID,
 )
@@ -135,6 +136,28 @@ class TestECUDiagnosticServerReadDID:
         resp = ems_server.handle_request(bytes([UDSSID.READ_DATA_BY_IDENTIFIER, 0x00, 0x0C]))
         val = int.from_bytes(resp[3:], "big")
         assert val == 3000
+
+    def test_custom_signed_did_uses_definition(self):
+        server = ECUDiagnosticServer(
+            "EMS",
+            did_values={0x1234: -12.5},
+            did_definitions={
+                0x1234: DIDDefinition(0x1234, "油温", data_type="int", byte_length=2, scale=0.1)
+            },
+        )
+        resp = server.handle_request(bytes([UDSSID.READ_DATA_BY_IDENTIFIER, 0x12, 0x34]))
+        assert int.from_bytes(resp[3:], "big", signed=True) == -125
+
+    def test_custom_did_rejects_inaccessible_session(self):
+        server = ECUDiagnosticServer(
+            "EMS",
+            did_values={0x1234: 1},
+            did_definitions={
+                0x1234: DIDDefinition(0x1234, "编程数据", read_sessions=("programming",))
+            },
+        )
+        resp = server.handle_request(bytes([UDSSID.READ_DATA_BY_IDENTIFIER, 0x12, 0x34]))
+        assert resp[2] == NRC.REQUEST_OUT_OF_RANGE
 
 
 class TestECUDiagnosticServerReadDTC:

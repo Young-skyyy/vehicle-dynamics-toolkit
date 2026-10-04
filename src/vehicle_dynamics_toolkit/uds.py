@@ -8,8 +8,12 @@ UDS (ISO 14229) 诊断协议栈：Session / Security Access / DID / DTC / Tester
 from __future__ import annotations
 import time
 import random
+from dataclasses import dataclass
+from typing import cast
 from enum import IntEnum
-from .iso_tp import segment_payload, IsoTPReceiver, encode_vin, decode_vin
+from .iso_tp import LegacyIsoTPAdapter, encode_vin, decode_vin
+from .timing import SimulationClock
+import math
 
 
 # ---- UDS Service IDs ----
@@ -17,6 +21,7 @@ from .iso_tp import segment_payload, IsoTPReceiver, encode_vin, decode_vin
 class UDSSID(IntEnum):
     DIAGNOSTIC_SESSION_CONTROL = 0x10
     ECU_RESET                = 0x11
+    CLEAR_DIAGNOSTIC_INFORMATION = 0x14
     READ_DATA_BY_IDENTIFIER  = 0x22
     SECURITY_ACCESS          = 0x27
     READ_DTC_INFORMATION     = 0x19
@@ -99,14 +104,33 @@ DTC_DATABASE = {
 
 # ---- Standard DIDs（常用数据标识符）----
 
-_STANDARD_DIDS: dict[int, dict[str, object]] = {
-    0x000C: {"name": "发动机转速",   "len": 2, "unit": "rpm"},
-    0x000D: {"name": "车速",        "len": 2, "unit": "km/h",  "scale": 0.01},
-    0x0005: {"name": "冷却液温度",   "len": 1, "unit": "degC",  "offset": -40},
-    0x0011: {"name": "节气门位置",   "len": 1, "unit": "%",     "scale": 0.4},
-    0x004C: {"name": "油门踏板位置", "len": 1, "unit": "%",     "scale": 0.4},
-    0x000F: {"name": "进气温度",     "len": 1, "unit": "degC",  "offset": -40},
-    0xF190: {"name": "VIN 车辆识别码", "len": 17, "unit": "",  "is_vin": True},
+@dataclass(frozen=True)
+class DIDDefinition:
+    identifier: int
+    name: str
+    data_type: str = "uint"
+    byte_length: int = 2
+    unit: str = ""
+    scale: float = 1.0
+    offset: float = 0.0
+    read_sessions: tuple[str, ...] = ("default", "extended", "programming")
+    security_level: int = 0
+
+    def __post_init__(self) -> None:
+        if (not 0 <= self.identifier <= 0xFFFF or self.data_type not in ("uint", "int", "ascii")
+                or self.byte_length <= 0 or not math.isfinite(self.scale) or self.scale <= 0
+                or not math.isfinite(self.offset)):
+            raise ValueError("invalid DID definition")
+
+
+_STANDARD_DIDS: dict[int, DIDDefinition] = {
+    0x000C: DIDDefinition(0x000C, "发动机转速", byte_length=2, unit="rpm"),
+    0x000D: DIDDefinition(0x000D, "车速", byte_length=2, unit="km/h", scale=0.01),
+    0x0005: DIDDefinition(0x0005, "冷却液温度", byte_length=1, unit="degC", offset=-40),
+    0x0011: DIDDefinition(0x0011, "节气门位置", byte_length=1, unit="%", scale=0.4),
+    0x004C: DIDDefinition(0x004C, "油门踏板位置", byte_length=1, unit="%", scale=0.4),
+    0x000F: DIDDefinition(0x000F, "进气温度", byte_length=1, unit="degC", offset=-40),
+    0xF190: DIDDefinition(0xF190, "VIN 车辆识别码", data_type="ascii", byte_length=17),
 }
 
 
@@ -122,20 +146,27 @@ class DiagnosticSession:
         s3_timeout: S3 Server 超时（秒），超时回退到 default session
     """
 
-    def __init__(self, s3_timeout: float = 5.0):
+    def __init__(self, s3_timeout: float = 5.0, clock: SimulationClock | None = None):
         self.session_type = "default"
         self.security_level = 0
         self.last_tester_present = 0.0
         self.s3_timeout = s3_timeout
+        self.clock = clock
+
+    def tick(self, dt_s: float) -> None:
+        """Explicit simulation stepping; injected clocks are preferred."""
+        if self.clock is None:
+            self.clock = SimulationClock(time.monotonic())
+        self.clock.advance(dt_s)
 
     def check_timeout(self) -> bool:
-        """返回 True 表示 S3 超时，应退回到 default session。"""
         if self.session_type == "default":
             return False
-        return time.monotonic() - self.last_tester_present > self.s3_timeout
+        now = time.monotonic() if self.clock is None else self.clock.now
+        return now - self.last_tester_present > self.s3_timeout
 
     def on_tester_present(self):
-        self.last_tester_present = time.monotonic()
+        self.last_tester_present = time.monotonic() if self.clock is None else self.clock.now
 
     def goto_default(self):
         self.session_type = "default"
@@ -155,24 +186,43 @@ class ECUDiagnosticServer:
     # 不同 session 下可访问的服务
     _SESSION_SERVICES = {
         "default":      {UDSSID.TESTER_PRESENT, UDSSID.READ_DATA_BY_IDENTIFIER, UDSSID.READ_DTC_INFORMATION, UDSSID.DIAGNOSTIC_SESSION_CONTROL},
-        "extended":     {UDSSID.TESTER_PRESENT, UDSSID.READ_DATA_BY_IDENTIFIER, UDSSID.READ_DTC_INFORMATION, UDSSID.DIAGNOSTIC_SESSION_CONTROL, UDSSID.ECU_RESET, UDSSID.SECURITY_ACCESS},
+        "extended":     {UDSSID.TESTER_PRESENT, UDSSID.READ_DATA_BY_IDENTIFIER, UDSSID.READ_DTC_INFORMATION, UDSSID.CLEAR_DIAGNOSTIC_INFORMATION, UDSSID.DIAGNOSTIC_SESSION_CONTROL, UDSSID.ECU_RESET, UDSSID.SECURITY_ACCESS},
         "programming":  {UDSSID.TESTER_PRESENT, UDSSID.DIAGNOSTIC_SESSION_CONTROL, UDSSID.ECU_RESET, UDSSID.SECURITY_ACCESS},
     }
 
-    def __init__(self, ecu_name: str, did_values: dict[int, float] | None = None):
+    def __init__(self, ecu_name: str, did_values: dict[int, float] | None = None,
+                 did_definitions: dict[int, DIDDefinition] | None = None,
+                 clock: SimulationClock | None = None, rng: random.Random | None = None):
         self.ecu_name = ecu_name
-        self.session = DiagnosticSession()
-        self.did_values: dict[int, float] = did_values or {}
+        self.session = DiagnosticSession(clock=clock)
+        self._rng = rng if rng is not None else random.Random()
+        self.did_values: dict[int, float] = dict(did_values or {})
+        self.did_definitions = dict(_STANDARD_DIDS)
+        if did_definitions:
+            self.did_definitions.update(did_definitions)
         # 非数值型 DID（如 VIN 17 字节字符串）
         self.did_bytes: dict[int, bytes] = {}
-        # ISO-TP 多帧传输（懒惰初始化）
-        self._iso_tp_rx: IsoTPReceiver | None = None
-        self._pending_response: list[bytes] = []
-        self._pending_response_idx: int = 0
+        self.dtc_status: dict[str, int] = {
+            code: int(cast(int, dtc["status"]))
+            for code, dtc in DTC_DATABASE.items()
+            if dtc["ecu"] == ecu_name
+        }
+        self._legacy_transport: LegacyIsoTPAdapter | None = None
+        for did in self.did_values:
+            self.did_definitions.setdefault(did, DIDDefinition(did, f"DID_{did:04X}"))
 
     def update_did(self, did: int, value: float):
         """更新 DID 实时值（由 CAN 仿真主循环调用）。"""
         self.did_values[did] = value
+        self.did_definitions.setdefault(
+            did, DIDDefinition(did, f"DID_{did:04X}")
+        )
+
+    def expire_session(self) -> None:
+        if self.session.check_timeout():
+            self.session.goto_default()
+            if hasattr(self, "_pending_seed"):
+                del self._pending_seed
 
     def handle_request(self, request: bytes) -> bytes:
         """处理一条 UDS 请求，返回响应字节串。
@@ -183,6 +233,7 @@ class ECUDiagnosticServer:
         Returns:
             响应字节串（含 SID）；空 bytes 表示不响应
         """
+        self.expire_session()
         if len(request) < 1:
             return b""
 
@@ -191,10 +242,6 @@ class ECUDiagnosticServer:
         # 0x3E（Tester Present）可在任何 session 接收
         if sid == UDSSID.TESTER_PRESENT:
             return self._handle_tester_present()
-
-        # S3 超时检查
-        if self.session.check_timeout():
-            self.session.goto_default()
 
         # 服务权限检查
         if sid not in self._SESSION_SERVICES.get(self.session.session_type, set()):
@@ -207,6 +254,8 @@ class ECUDiagnosticServer:
             return self._handle_read_did(request)
         elif sid == UDSSID.READ_DTC_INFORMATION:
             return self._handle_read_dtc(request)
+        elif sid == UDSSID.CLEAR_DIAGNOSTIC_INFORMATION:
+            return self._handle_clear_dtc(request)
         elif sid == UDSSID.ECU_RESET:
             return self._handle_ecu_reset(request)
         elif sid == UDSSID.SECURITY_ACCESS:
@@ -238,24 +287,32 @@ class ECUDiagnosticServer:
         if len(request) < 3:
             return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.INCORRECT_MESSAGE_LENGTH)
         did = (request[1] << 8) | request[2]
+        definition = self.did_definitions.get(did)
+        if definition is None or self.session.session_type not in definition.read_sessions:
+            return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.REQUEST_OUT_OF_RANGE)
+        if self.session.security_level < definition.security_level:
+            return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.SECURITY_ACCESS_DENIED)
 
-        # 检查是否为 bytes 型 DID（如 VIN）
-        info = _STANDARD_DIDS.get(did, {"name": f"DID_{did:04X}", "len": 2, "unit": ""})
-        if info.get("is_vin"):
-            vin_data = self.did_bytes.get(did, encode_vin(self._DEFAULT_VIN))
+        if definition.data_type == "ascii":
+            value = self.did_bytes.get(did, encode_vin(self._DEFAULT_VIN))
+            if len(value) != definition.byte_length:
+                return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.REQUEST_OUT_OF_RANGE)
             return bytes([UDSSID.READ_DATA_BY_IDENTIFIER + POSITIVE_RESPONSE_OFFSET,
-                          request[1], request[2]]) + vin_data
+                          request[1], request[2]]) + value
 
         if did not in self.did_values:
             return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.REQUEST_OUT_OF_RANGE)
         raw_val = self.did_values[did]
-        # 编码物理值 → 原始值
-        scale = float(info.get("scale", 1))       # type: ignore[arg-type]
-        offset = float(info.get("offset", 0))      # type: ignore[arg-type]
-        raw = int((raw_val - offset) / scale)
-        length = int(info["len"])                   # type: ignore[arg-type, call-overload]
+        if not math.isfinite(raw_val):
+            return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.REQUEST_OUT_OF_RANGE)
+        raw = int(round((raw_val - definition.offset) / definition.scale))
+        min_raw = -(1 << (definition.byte_length * 8 - 1)) if definition.data_type == "int" else 0
+        max_raw = (1 << (definition.byte_length * 8 - (1 if definition.data_type == "int" else 0))) - 1
+        if not min_raw <= raw <= max_raw:
+            return self._negative_response(UDSSID.READ_DATA_BY_IDENTIFIER, NRC.REQUEST_OUT_OF_RANGE)
         return bytes([UDSSID.READ_DATA_BY_IDENTIFIER + POSITIVE_RESPONSE_OFFSET,
-                      request[1], request[2]]) + raw.to_bytes(length, "big")
+                      request[1], request[2]]) + raw.to_bytes(
+                          definition.byte_length, "big", signed=definition.data_type == "int")
 
     def _handle_read_dtc(self, request: bytes) -> bytes:
         if len(request) < 2:
@@ -267,9 +324,9 @@ class ECUDiagnosticServer:
             # Status Mask 在 request[2]
             mask = request[2] if len(request) >= 3 else 0xFF
             matched: list[tuple[str, int]] = []
-            for code, dtc in DTC_DATABASE.items():
-                if dtc["ecu"] == self.ecu_name and (int(dtc["status"]) & mask):  # type: ignore[arg-type, call-overload]
-                    matched.append((code, int(dtc["status"])))  # type: ignore[arg-type, call-overload]
+            for code, status in self.dtc_status.items():
+                if status & mask:
+                    matched.append((code, status))
             # DTC Availability Mask + DTCs
             response = bytes([UDSSID.READ_DTC_INFORMATION + POSITIVE_RESPONSE_OFFSET, 0x02])
             response += (1).to_bytes(1, "big")  # DTC Availability Mask (1 byte)
@@ -280,11 +337,35 @@ class ECUDiagnosticServer:
             return response
         elif sub == 0x0A:
             # 返回支持的 DTC 数量
-            count = sum(1 for dtc in DTC_DATABASE.values() if dtc["ecu"] == self.ecu_name)
             return bytes([UDSSID.READ_DTC_INFORMATION + POSITIVE_RESPONSE_OFFSET, 0x0A,
-                          count])
+                          len(self.dtc_status)])
         else:
             return self._negative_response(UDSSID.READ_DTC_INFORMATION, NRC.SUB_FUNCTION_NOT_SUPPORTED)
+
+    def set_dtc(self, code: str, status: int | None = None) -> None:
+        """Set an ECU-local DTC status for fault injection or test adapters."""
+        if code not in self.dtc_status:
+            raise ValueError(f"DTC {code} is not configured for ECU {self.ecu_name}")
+        if status is not None and not 0 <= status <= 255:
+            raise ValueError("DTC status must fit one byte")
+        self.dtc_status[code] = (
+            dtc_status_byte(test_failed=True, pending=True, confirmed=True)
+            if status is None else status
+        )
+
+    def clear_dtcs(self) -> None:
+        """Clear all ECU-local DTC status bits."""
+        for code in self.dtc_status:
+            self.dtc_status[code] = 0
+
+    def _handle_clear_dtc(self, request: bytes) -> bytes:
+        if len(request) != 4:
+            return self._negative_response(UDSSID.CLEAR_DIAGNOSTIC_INFORMATION, NRC.INCORRECT_MESSAGE_LENGTH)
+        group = int.from_bytes(request[1:4], "big")
+        if group not in (0xFFFFFF, 0x000000):
+            return self._negative_response(UDSSID.CLEAR_DIAGNOSTIC_INFORMATION, NRC.REQUEST_OUT_OF_RANGE)
+        self.clear_dtcs()
+        return bytes([UDSSID.CLEAR_DIAGNOSTIC_INFORMATION + POSITIVE_RESPONSE_OFFSET])
 
     def _handle_security_access(self, request: bytes) -> bytes:
         """0x27 Security Access：requestSeed (0x01) / sendKey (0x02)。
@@ -304,7 +385,7 @@ class ECUDiagnosticServer:
         actual_sub = sub & 0x7F
 
         if actual_sub == 0x01:  # requestSeed
-            self._pending_seed = random.randint(0, 0xFFFF)
+            self._pending_seed = self._rng.randint(0, 0xFFFF)
             if suppress:
                 return b""  # 抑制正响应
             return bytes([UDSSID.SECURITY_ACCESS + POSITIVE_RESPONSE_OFFSET, 0x01]) + \
@@ -345,69 +426,16 @@ class ECUDiagnosticServer:
 
     _DEFAULT_VIN = "WVWZZZ3CZ9E000001"  # 17位占位 VIN
 
-    def handle_iso_tp_frame(self, can_data: bytes) -> bytes | None:
-        """处理从 CAN 总线上接收的 ISO-TP 帧。
-
-        若是 SF 则直接调用 handle_request()；若是多帧（FF/CF）则内部缓冲重组，
-        完成后同样调用 handle_request()。返回的响应若需分段则由本方法负责
-        segment_payload() 封装。
-
-        Args:
-            can_data: CAN 帧 data 字段（8 字节，含 PCI 字节）
-
-        Returns:
-            bytes | None: 需发回 CAN 总线的响应帧（可能是多帧中的一帧），
-                          没有响应时返回 None
-        """
-        # 懒惰初始化 ISO-TP 接收端
-        if self._iso_tp_rx is None:
-            self._iso_tp_rx = IsoTPReceiver()
-
-        assembled, fc = self._iso_tp_rx.feed(can_data)
-
-        # 如果接收端需要发 FC 帧，优先回复 FC
-        if fc is not None:
-            return fc
-
-        # 数据尚未收全（后续 CF 会补上）
-        if assembled is None:
-            return None
-
-        # 完整请求已收到 → 处理
-        response = self.handle_request(assembled)
-
-        # 如果响应 ≤ 7 字节 → 直接封 SF 返回
-        if len(response) <= 7:
-            self._iso_tp_rx.reset()
-            self._pending_response = []
-            self._pending_response_idx = 0
-            return self._wrap_single_frame(response)
-
-        # 响应 > 7 字节 → segment_payload，返回第一帧，其余缓存
-        self._pending_response = segment_payload(response)
-        self._pending_response_idx = 1
-        self._iso_tp_rx.reset()
-        return self._pending_response[0]
+    def handle_iso_tp_frame(self, can_data: bytes, timestamp_s: float = 0.0) -> bytes | None:
+        """Legacy polling adapter; CAN integrations use IsoTPChannel instead."""
+        if self._legacy_transport is None:
+            self._legacy_transport = LegacyIsoTPAdapter(self.handle_request)
+        return self._legacy_transport.feed(can_data, timestamp_s)
 
     def get_next_response_frame(self) -> bytes | None:
-        """轮询剩余的多帧响应（FC 交互后调用）。
-
-        Returns:
-            bytes | None: 下一帧 CF，没有更多帧时返回 None
-        """
-        if self._pending_response_idx >= len(self._pending_response):
-            self._pending_response = []
-            self._pending_response_idx = 0
+        if self._legacy_transport is None:
             return None
-        frame = self._pending_response[self._pending_response_idx]
-        self._pending_response_idx += 1
-        return frame
-
-    @staticmethod
-    def _wrap_single_frame(response: bytes) -> bytes:
-        """把 ≤7 字节的 UDS 响应封装为 ISO-TP Single Frame。"""
-        n = len(response)
-        return bytes([0x00 | n]) + response
+        return self._legacy_transport.next_frame()
 
 
 # ---- 诊断仪（模拟）----

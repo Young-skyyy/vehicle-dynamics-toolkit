@@ -1,94 +1,63 @@
-# -*- coding: utf-8 -*-
-"""Independent virtual ECU core shared by Python, CAN and UDS adapters."""
-
+"""Compatibility facade composing a signal model, simulation clock and UDS."""
 from __future__ import annotations
-
 import random
-
+from .signal_model import SignalModel
+from .timing import SimulationClock
 from .uds import ECUDiagnosticServer
 
+class CoreECU(SignalModel):
+    """Synthetic protocol fixture. Use DynamicsModel for vehicle physics.
 
-class CoreECU:
-    """可独立运行的虚拟 ECU 核心，统一维护状态和诊断端点。"""
-
+    Existing signal attributes and percentage controls remain compatible.
+    CAN observation and diagnostic randomness cannot change model evolution.
+    """
     def __init__(self, ecu_name: str = "EMS", seed: int | None = 42,
-                 did_values: dict[int, float] | None = None):
+                 did_values: dict[int, float] | None = None,
+                 clock: SimulationClock | None = None):
+        super().__init__(seed)
         self.ecu_name = ecu_name
-        self._rng = random.Random(seed)
-        self.rpm = 800.0
-        self.throttle = 0.0
-        self.speed = 0.0
-        self.coolant_temp = 25.0
-        self.gear = 0
-        self.soc = 80.0
-        self.brake_pressure = 0.0
-        self.accelerating = False
-        self.diagnostic = ECUDiagnosticServer(ecu_name, did_values or {
-            0x000C: float(self.rpm),
-            0x000D: float(self.speed),
-            0x0005: float(self.coolant_temp),
-        })
+        self.clock = clock if clock is not None else SimulationClock()
+        self.signal_rng = random.Random(None if seed is None else f"{seed}:signals")
+        self.diagnostic = ECUDiagnosticServer(
+            ecu_name, did_values, clock=self.clock,
+            rng=random.Random(None if seed is None else f"{seed}:diagnostics"))
+        self._publish_dids()
 
-    def update(self, dt_s: float) -> None:
-        """推进 ECU 状态，并同步动态 DID。"""
-        if not self.accelerating and self.speed <= 0:
-            self.accelerating = True
-            self.gear = 1
-        if self.speed >= 80:
-            self.accelerating = False
+    def bind_clock(self, clock: SimulationClock) -> None:
+        if abs(clock.now - self.clock.now) > 1e-12:
+            raise ValueError("ECU and CAN must start at the same simulation time")
+        self.clock = clock
+        self.diagnostic.session.clock = clock
 
-        if self.accelerating:
-            self.throttle = min(80, self.throttle + self._rng.uniform(0, 10) * dt_s)
-            self.rpm += int(500 * dt_s)
-            self.speed += 3 * dt_s
-        else:
-            self.throttle = max(0, self.throttle - self._rng.uniform(5, 15) * dt_s)
-            self.rpm -= int(300 * dt_s)
-            self.speed = max(0, self.speed - 2 * dt_s)
+    def _publish_dids(self) -> None:
+        for did, value in ((0x000C, self.rpm), (0x000D, self.speed),
+                           (0x0005, self.coolant_temp)):
+            self.diagnostic.update_did(did, float(value))
 
-        self.rpm = max(800, min(6000, self.rpm))
-        self.speed = max(0, min(120, self.speed))
-        self.coolant_temp = min(95, self.coolant_temp + 0.5 * dt_s)
-        self.soc -= 0.001 * dt_s
-
-        if self.speed > 60:
-            self.gear = 5
-        elif self.speed > 40:
-            self.gear = 4
-        elif self.speed > 25:
-            self.gear = 3
-        elif self.speed > 10:
-            self.gear = 2
-        elif self.speed > 0:
-            self.gear = 1
-        else:
-            self.gear = 0
-
-        self.brake_pressure = self._rng.uniform(0, 5) if not self.accelerating else 0
-        self.diagnostic.update_did(0x000C, float(self.rpm))
-        self.diagnostic.update_did(0x000D, float(self.speed))
-        self.diagnostic.update_did(0x0005, float(self.coolant_temp))
-
-    def snapshot(self) -> dict[str, float | int | bool]:
-        return {
-            "rpm": self.rpm,
-            "throttle": self.throttle,
-            "speed": self.speed,
-            "coolant_temp": self.coolant_temp,
-            "gear": self.gear,
-            "soc": self.soc,
-            "brake_pressure": self.brake_pressure,
-            "accelerating": self.accelerating,
-        }
+    def update(self, dt_s: float, throttle: float | None = None,
+               brake: float | None = None) -> None:
+        super().update(dt_s, throttle, brake)
+        self.clock.advance(dt_s)
+        self._publish_dids()
+        self.diagnostic.expire_session()
 
     def update_did(self, did: int, value: float) -> None:
         self.diagnostic.update_did(did, value)
 
+    def inject_fault(self, code: str, status: int | None = None) -> None:
+        self.diagnostic.set_dtc(code, status)
+
+    def clear_faults(self) -> None:
+        self.diagnostic.clear_dtcs()
+
     def handle_request(self, request: bytes) -> bytes:
         return self.diagnostic.handle_request(request)
 
-    def handle_iso_tp_frame(self, can_data: bytes) -> bytes | None:
-        return self.diagnostic.handle_iso_tp_frame(can_data)
+    def handle_iso_tp_frame(self, can_data: bytes,
+                            timestamp_s: float | None = None) -> bytes | None:
+        timestamp = self.clock.now if timestamp_s is None else timestamp_s
+        self.clock.advance_to(timestamp)
+        return self.diagnostic.handle_iso_tp_frame(can_data, timestamp)
 
     def get_next_response_frame(self) -> bytes | None:
         return self.diagnostic.get_next_response_frame()

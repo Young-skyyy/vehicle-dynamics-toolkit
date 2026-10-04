@@ -109,3 +109,20 @@ jobs:
         with:
           name: ros2-parity-report
           path: build/ros2-parity/report.json
+
+  wheel-fmu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and install wheel
+        run: |
+          python -m pip install build
+          python -m build --wheel
+          python -m pip install dist/*.whl
+      - name: Compile and exercise FMU outside source checkout
+        run: |
+          cd "$(mktemp -d)"
+          python "$GITHUB_WORKSPACE/scripts/check_fmu_install.py" --require-installed --compiler cc

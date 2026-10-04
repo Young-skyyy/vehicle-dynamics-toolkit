@@ -51,21 +51,7 @@ ECUS = [
 ]
 
 
-def frame_bits(data_bytes):
-    """计算一帧 CAN 2.0A 标准帧的总位数（含位填充估计）。
-
-    CAN 2.0A 帧结构：
-      SOF(1) + ID(11) + RTR(1) + IDE(1) + r0(1) + DLC(4)
-      + Data(N×8) + CRC(15) + CRC_Delim(1) + ACK(1) + ACK_Delim(1)
-      + EOF(7) + IFS(3) = 47 + 8×N
-
-    位填充规则：SOF 到 CRC（不含 CRC_Delim）之间，每连续 5 个相同 bit
-    插入 1 个反 bit。这里用 (overhead + data_bits) // 10 做简化估算（≈10%）。
-    """
-    overhead = 47          # SOF+ID+RTR+IDE+r0+DLC+CRC+CRC_Delim+ACK+ACK_Delim+EOF+IFS
-    data_bits = data_bytes * 8
-    stuffing = (overhead + data_bits) // 10  # 位填充估算 ~10%
-    return overhead + data_bits + stuffing
+from .can_codec import frame_bits
 
 
 # 2. 负载计算（纯计算，不打印）

@@ -37,7 +37,7 @@ typedef struct {
     fmi2Real time;
 } ecu_t;
 
-FMI_EXPORT const char* fmi2GetTypesPlatform(void) { return "standard32"; }
+FMI_EXPORT const char* fmi2GetTypesPlatform(void) { return "default"; }
 FMI_EXPORT const char* fmi2GetVersion(void) { return "2.0"; }
 FMI_EXPORT fmi2Component fmi2Instantiate(const char* instanceName, int fmuType, const char* guid,
     const char* resourceLocation, const fmi2CallbackFunctions* functions, fmi2Boolean visible,

@@ -45,7 +45,8 @@ def model_description() -> bytes:
     for name, ref, causality, kind, start in _VARIABLES:
         var = SubElement(model_variables, "ScalarVariable", {
             "name": name, "valueReference": str(ref),
-            "causality": causality, "variability": "continuous",
+            "causality": causality, "variability": "discrete" if kind == "Integer" else "continuous",
+            **({"initial": "exact"} if causality == "output" else {}),
         })
         SubElement(var, kind, {"start": str(start)})
     outputs = SubElement(root, "ModelStructure")
@@ -63,19 +64,23 @@ def build_fmu(output: str | Path, source_dir: str | Path | None = None,
     Python installation. A C compiler is required for the target platform.
     """
     output_path = Path(output).resolve()
-    source = Path(source_dir or Path(__file__).resolve().parents[2] / "fmu" / "ecu_fmu.c")
+    source = Path(source_dir or Path(__file__).resolve().parent / "native" / "ecu_fmu.c")
     if not source.exists():
         raise FileNotFoundError(source)
     cc = compiler or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
         raise RuntimeError("未找到 C 编译器；请安装 clang/gcc，或通过 compiler 参数指定。")
+    if platform.system() not in ("Windows", "Linux") or platform.machine().lower() not in ("amd64", "x86_64"):
+        raise RuntimeError("FMU packaging currently supports Windows/Linux x86-64 only")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    prefix = [cc, "cc"] if Path(cc).stem.lower() == "zig" else [cc]
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         binary = tmp_path / ("ecu_fmu.dll" if platform.system() == "Windows" else "ecu_fmu.so")
         if platform.system() == "Windows":
-            command = [cc, "-shared", "-O2", str(source), "-o", str(binary)]
+            command = prefix + ["-shared", "-O2", str(source), "-o", str(binary)]
         else:
-            command = [cc, "-shared", "-fPIC", "-O2", str(source), "-o", str(binary)]
+            command = prefix + ["-shared", "-fPIC", "-O2", str(source), "-o", str(binary)]
         subprocess.run(command, check=True)
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("modelDescription.xml", model_description())
