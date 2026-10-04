@@ -82,6 +82,8 @@ def generate_frame(name, msg_def, veh, sim_time):
     通过 _FRAME_GENERATORS 字典 dispatch 到对应信号生成函数，
     新增 ECU 只需添加函数 + 字典条目。
     """
+    if isinstance(veh, CoreECU):
+        veh.prepare_observation()
     generator = _FRAME_GENERATORS.get(name)
     if generator is None:
         raise ValueError(f"未知的 ECU 消息类型: {name}")

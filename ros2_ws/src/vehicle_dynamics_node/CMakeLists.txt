@@ -17,10 +17,14 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(vehicle_msgs REQUIRED)
 
+# Canonical native core is shared with the packaged FMU.
+get_filename_component(VDT_NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/vehicle_dynamics_toolkit/native" ABSOLUTE)
+
 # 编译 C++ 动力学节点
 add_executable(dynamics_node src/vehicle_dynamics_node.cpp)
 target_include_directories(dynamics_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${VDT_NATIVE_DIR}>
   $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(dynamics_node
@@ -31,7 +35,9 @@ ament_target_dependencies(dynamics_node
 
 # Headless replay of the same header used by dynamics_node (no ROS in the core).
 add_executable(dynamics_runner src/dynamics_runner.cpp)
-target_include_directories(dynamics_runner PRIVATE include)
+target_include_directories(dynamics_runner PRIVATE include ${VDT_NATIVE_DIR})
+install(DIRECTORY include/ DESTINATION include)
+install(FILES ${VDT_NATIVE_DIR}/dynamics_core.hpp DESTINATION include/vehicle_dynamics_node)
 
 # 安装可执行文件
 install(TARGETS dynamics_node dynamics_runner

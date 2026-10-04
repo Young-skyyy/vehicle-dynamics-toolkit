@@ -51,6 +51,7 @@ test = [
 
 [project.scripts]
 vehicle-dynamics-demo = "vehicle_dynamics_toolkit.__main__:main"
+vehicle-dynamics-showcase = "vehicle_dynamics_toolkit.showcase:main"
 
 [project.urls]
 Homepage = "https://github.com/Young-skyyy/vehicle-dynamics-toolkit"
@@ -64,4 +65,4 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 
 [tool.setuptools.package-data]
-vehicle_dynamics_toolkit = ["native/*.c"]
+vehicle_dynamics_toolkit = ["native/*.cpp", "native/*.hpp"]

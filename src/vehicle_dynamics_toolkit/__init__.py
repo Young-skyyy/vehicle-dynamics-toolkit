@@ -54,7 +54,7 @@ from .lateral_dynamics import (
 )
 
 # ── ECU core ──
-from .ecu import CoreECU
+from .ecu import CoreECU, DynamicsECU
 from .can_bus import CANBus, CANFrame
 from .diagnostic_tester import DiagnosticTester
 from .uds_can import CANDiagnosticTester, VirtualECUNode
@@ -116,5 +116,5 @@ __version__ = "3.0.0"
 
 from .timing import SimulationClock
 from .signal_model import SignalModel
-from .simulation import DynamicsModel, DynamicsState
+from .simulation import DynamicsModel, DynamicsState, DriverInput
 from .uds import DIDDefinition

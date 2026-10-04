@@ -1,5 +1,25 @@
 # Changelog
 
+- Fix platform-specific FMU unloading type checks; CI checks Linux and Windows targets.
+
+## 2026-10-04 — Reproducible physical CAN/UDS showcase
+
+- Add one-command launch/turn/coast/brake scenario with optional native FMU comparison.
+- Detect an intentional CAN reception gap and demonstrate UDS fault read/clear recovery.
+- Export physical/control CSV, delivered CAN ASC, DBC, diagnostic events, verification report and overview figure.
+- Keep failed observations visible and distinguish omitted FMU checks from completed checks.
+- Exercise the installed-wheel showcase in CI and preserve its evidence artifact.
+
+## 2026-10-04 — Independent physics verification and shared physical adapters
+
+- Add 34 closed-form checks plus explicit convergence tolerances and failure exit codes.
+- Mark untraceable legacy vehicle benchmarks UNVERIFIED; record a dated manufacturer source.
+- Add aligned measured-trace comparison with provenance, SI units, declared limits and content hashes.
+- Bind DynamicsECU CAN/UDS observations to the physical plant and shared clock.
+- Share one C++ kernel across ROS2, replay and native FMU; package both wrapper and header.
+- Break the experimental FMU v1 interface: normalized controls, steering, initial speed and SI outputs use a new GUID.
+- Compare FMU/physical ECU against Python over 12 cases / 18,600 samples and 198 CAN/UDS observations in the installed-wheel CI check.
+
 ## 2026-10-04 — Simulation and protocol boundaries
 
 - Add configurable DID definitions, ECU-local DTC injection/clearing and explicit throttle/brake controls.

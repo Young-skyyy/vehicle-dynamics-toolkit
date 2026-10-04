@@ -40,7 +40,9 @@ jobs:
         run: pip install mypy
 
       - name: Type check
-        run: python -m mypy --ignore-missing-imports src/vehicle_dynamics_toolkit/
+        run: |
+          python -m mypy --platform linux --ignore-missing-imports src/vehicle_dynamics_toolkit/
+          python -m mypy --platform win32 --ignore-missing-imports src/vehicle_dynamics_toolkit/
 
   # ── 真正编译、运行、逐样本比较 C++ 与 Python ──
   dynamics-parity:
@@ -59,6 +61,15 @@ jobs:
 
       - name: Compile and compare the ROS2 dynamics core
         run: python scripts/compare_py_cpp.py --check
+
+      - name: Verify physics against independent analytical solutions
+        run: python scripts/validate_physics.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analytical-physics-report
+          path: build/physics/report.json
 
       - name: Upload comparison evidence
         if: always()
@@ -125,4 +136,21 @@ jobs:
       - name: Compile and exercise FMU outside source checkout
         run: |
           cd "$(mktemp -d)"
-          python "$GITHUB_WORKSPACE/scripts/check_fmu_install.py" --require-installed --compiler cc
+          python "$GITHUB_WORKSPACE/scripts/check_fmu_install.py" --require-installed --compiler c++ --output "$GITHUB_WORKSPACE/build/fmu/report.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: physical-fmu-can-uds-report
+          path: build/fmu/report.json
+
+      - name: Run the installed end-to-end showcase
+        run: |
+          cd "$(mktemp -d)"
+          python -m vehicle_dynamics_toolkit.showcase --with-fmu --compiler c++ --output "$GITHUB_WORKSPACE/build/showcase"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vehicle-showcase
+          path: build/showcase/

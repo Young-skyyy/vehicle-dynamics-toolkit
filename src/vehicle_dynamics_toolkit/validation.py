@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-实车基准数据校验模块
+基准来源管理与模型对照（历史数据未核验）
 
 对比模型输出与已发布的车辆规格数据，并对差异做出解释。
 """
@@ -8,10 +8,10 @@
 from __future__ import annotations
 
 from .vehicle import Vehicle, simulate_acceleration, calc_braking_distance
-from .lateral_dynamics import calc_understeer_gradient, calc_steady_state_cornering
+from .lateral_dynamics import calc_understeer_gradient
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 实车基准数据
+# 历史基准数据（未核验，仅保留兼容）
 # ═══════════════════════════════════════════════════════════════════════════
 
 REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
@@ -24,7 +24,7 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
         "fuel_wltc_l100": 5.8,
         "cornering_stiffness_f": 75000,
         "kus_deg_per_g": 2.5,  # family sedan: 2-3 deg/g (Gillespie, 1992)
-        "source": "Toyota official specs; understeer gradient range from vehicle dynamics literature",
+        "source": "Legacy source claim unverified; do not use as validated evidence",
     },
     "Honda Civic 1.5T (2023)": {
         "mass_kg": 1370,
@@ -35,7 +35,7 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
         "fuel_wltc_l100": 5.5,
         "cornering_stiffness_f": 78000,
         "kus_deg_per_g": 1.8,  # sportier compact: 1.5-2.0 deg/g
-        "source": "Honda official specs; understeer gradient range from vehicle dynamics literature",
+        "source": "Legacy source claim unverified; do not use as validated evidence",
     },
     "Volkswagen Tiguan 2.0T (2023)": {
         "mass_kg": 1650,
@@ -46,7 +46,25 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
         "fuel_wltc_l100": 7.0,
         "cornering_stiffness_f": 85000,
         "kus_deg_per_g": 2.0,  # compact SUV: 2-3 deg/g, depends on tire/suspension
-        "source": "Volkswagen official specs; understeer gradient range from vehicle dynamics literature",
+        "source": "Legacy source claim unverified; do not use as validated evidence",
+    },
+}
+
+for _benchmark in REAL_VEHICLE_BENCHMARKS.values():
+    _benchmark["evidence"] = "UNVERIFIED"
+    _benchmark["source"] = "Legacy values: no traceable trim, source URL or matched test conditions"
+
+# Verified primary source, specific trim and dated publication. This is a
+# manufacturer specification, NOT measured telemetry or a calibrated model.
+PUBLISHED_SPECIFICATIONS = {
+    "Volkswagen Tiguan Allspace 1.5 TSI 110 kW 6-speed manual (2021)": {
+        "mass_kg_min": 1571, "power_kw": 110, "max_torque_nm": 250,
+        "accel_0_100_s": 10.3,
+        "source_url": "https://www.volkswagen-newsroom.com/en/the-new-tiguan-allspace-test-drives-7543/technical-data-7556",
+        "publication_date": "2021-10-11", "checked_date": "2026-10-04",
+        "evidence": "manufacturer_specification",
+        "conditions": "Manufacturer figure; minimum kerb weight, payload/test environment not specified here",
+        "missing_model_parameters": ["gear ratios", "final drive", "torque curve", "drag area", "tire stiffness"],
     },
 }
 
@@ -55,8 +73,8 @@ REAL_VEHICLE_BENCHMARKS: dict[str, dict] = {
 # ═══════════════════════════════════════════════════════════════════════════
 
 ACCEL_TOLERANCE_PCT = 15
-BRAKING_TOLERANCE_PCT = 20  # 放宽：简化公式不含 ABS/重量转移/轮胎非线性
-LATERAL_TOLERANCE_PCT = 25  # 侧偏刚度来自轴荷反推，非实测数据
+BRAKING_TOLERANCE_PCT = 20  # legacy compatibility only; not a validation threshold
+LATERAL_TOLERANCE_PCT = 25  # legacy compatibility only; no measured lateral target
 
 
 def _lookup_benchmark(vehicle: Vehicle) -> dict | None:
@@ -65,8 +83,8 @@ def _lookup_benchmark(vehicle: Vehicle) -> dict | None:
 
 
 def _verdict(error_pct: float, tolerance_pct: float) -> str:
-    """根据误差百分比判断 PASS / FAIL。"""
-    return "PASS" if abs(error_pct) <= tolerance_pct else "FAIL"
+    """历史容差不再用于实车判定：缺少可追溯来源与条件。"""
+    return "UNVERIFIED (历史基准来源/测试条件未核验)"
 
 
 def _error_pct(model_val: float, benchmark_val: float) -> float:
@@ -99,7 +117,7 @@ def validate_acceleration(vehicle: Vehicle, target_kmh: float = 100) -> dict:
         }
 
     benchmark = _lookup_benchmark(vehicle)
-    if benchmark is None:
+    if benchmark is None or target_kmh != 100:
         return {
             "model_time_s": model_time,
             "benchmark_time_s": None,
@@ -120,9 +138,7 @@ def validate_acceleration(vehicle: Vehicle, target_kmh: float = 100) -> dict:
 def validate_braking(speed_kmh: float = 100, friction_coeff: float = 0.90) -> dict:
     """校验 100–0 km/h 制动距离。
 
-    使用 μ=0.90 代表现代乘用车干沥青路面（含 ABS 优化），
-    与全部三款车的制动基准均值对比。容差 ±20% 因为简化公式
-    未包含 ABS、重量转移及轮胎非线性。
+    μ 是调用者假设；不把多车型均值当作实车校验，也不宣称模拟 ABS。
 
     Args:
         speed_kmh:      制动初速度 (km/h)，默认 100
@@ -134,16 +150,10 @@ def validate_braking(speed_kmh: float = 100, friction_coeff: float = 0.90) -> di
     _reaction, braking_dist, _total = calc_braking_distance(speed_kmh, friction_coeff=friction_coeff)
     model_dist = round(braking_dist, 1)
 
-    # 各车型基准制动距离取均值作为比较基准
-    bench_values = [b["braking_100_0_m"] for b in REAL_VEHICLE_BENCHMARKS.values()]
-    bench_avg = sum(bench_values) / len(bench_values)
-    error = _error_pct(model_dist, bench_avg)
-    return {
-        "model_dist_m": model_dist,
-        "benchmark_dist_m": round(bench_avg, 1),
-        "error_pct": round(error, 1),
-        "verdict": _verdict(error, BRAKING_TOLERANCE_PCT),
-    }
+    # A fleet average is not a braking baseline for a particular vehicle.
+    return {"model_dist_m": model_dist, "benchmark_dist_m": None,
+            "error_pct": None, "verdict": "UNVERIFIED (缺少车型与路面条件匹配的实测制动数据)"}
+
 
 
 def validate_lateral(vehicle: Vehicle) -> dict:
@@ -186,127 +196,16 @@ def validate_lateral(vehicle: Vehicle) -> dict:
 
 
 def print_validation_report() -> None:
-    """生成并打印格式化的校验报告表格。
+    """Print evidence levels without manufacturing a real-car PASS claim."""
+    from .physical_validation import physics_report
+    report = physics_report()
+    print(f"Analytical verification: {report['checks']} checks; passed={report['passed']}")
+    print("Real-vehicle accuracy: NOT_VALIDATED (no measured traces supplied)")
+    for name, benchmark in PUBLISHED_SPECIFICATIONS.items():
+        print(f"Manufacturer specification: {name}; 0-100={benchmark['accel_0_100_s']} s")
+        print("Source:", benchmark["source_url"])
+    print("Legacy Camry/Civic/Tiguan values: UNVERIFIED; excluded from PASS/FAIL evidence")
 
-    根据 REAL_VEHICLE_BENCHMARKS 为每款车创建匹配的 Vehicle 对象，
-    分别运行加速、制动校验，输出 Markdown 风格对比表格。
-    """
-    # 为每款实车构造最匹配的 Vehicle 参数
-    _vehicle_specs = {
-        "Toyota Camry 2.0L (2023)": dict(
-            mass_kg=1550, power_kw=127, max_torque_nm=207,
-            drag_coeff=0.28, frontal_area_m2=2.30,
-            gear_ratios=[3.30, 1.90, 1.42, 1.00, 0.71],
-            final_drive=3.63, wheel_radius_m=0.32,
-            trans_efficiency=0.90, fuel_density_gl=740, fuel_type="gasoline",
-            wheelbase_m=2.825,
-            cornering_stiffness_f=75000, cornering_stiffness_r=90000,
-        ),
-        "Honda Civic 1.5T (2023)": dict(
-            mass_kg=1370, power_kw=134, max_torque_nm=240,
-            drag_coeff=0.26, frontal_area_m2=2.20,
-            gear_ratios=[3.64, 2.08, 1.36, 1.00, 0.76],
-            final_drive=4.11, wheel_radius_m=0.32,
-            trans_efficiency=0.90, fuel_density_gl=740, fuel_type="gasoline",
-            wheelbase_m=2.735,
-            cornering_stiffness_f=78000, cornering_stiffness_r=90000,
-        ),
-        "Volkswagen Tiguan 2.0T (2023)": dict(
-            mass_kg=1650, power_kw=137, max_torque_nm=320,
-            drag_coeff=0.33, frontal_area_m2=2.50,
-            gear_ratios=[3.46, 2.05, 1.30, 0.92, 0.77],
-            final_drive=3.45, wheel_radius_m=0.34,
-            trans_efficiency=0.88, fuel_density_gl=740, fuel_type="gasoline",
-            engine_type="turbo",
-            wheelbase_m=2.68,
-            cornering_stiffness_f=85000, cornering_stiffness_r=95000,
-        ),
-    }
-
-    vehicles: list[Vehicle] = []
-    for name, spec in _vehicle_specs.items():
-        v = Vehicle(name=name, **spec)  # type: ignore[arg-type]
-        vehicles.append(v)
-
-    # ── 表头 ──
-    header = (
-        f"{'车型':<28s} {'指标':<10s} "
-        f"{'模型值':>8s}  {'基准值':>8s}  "
-        f"{'误差%':>7s}  {'判定':>6s}"
-    )
-    sep = "-" * len(header)
-
-    print("\n" + "=" * len(header))
-    print("  车辆动力学模型 — 实车基准校验报告")
-    print("=" * len(header))
-    print(f"  加速容差: ±{ACCEL_TOLERANCE_PCT}%  制动容差: ±{BRAKING_TOLERANCE_PCT}%  横向容差: ±{LATERAL_TOLERANCE_PCT}%")
-    print(sep)
-    print(header)
-    print(sep)
-
-    for v in vehicles:
-        bm = REAL_VEHICLE_BENCHMARKS.get(v.name, {})
-
-        # 加速
-        acc = validate_acceleration(v)
-        row_acc = (
-            f"{v.name:<28s} {'0-100加速':<10s} "
-            f"{acc['model_time_s']:>6.1f}s  {acc['benchmark_time_s']:>6.1f}s  "
-            f"{_fmt_pct(acc['error_pct']):>7s}  {acc['verdict']:>6s}"
-        )
-
-        # 制动
-        brk = validate_braking()
-        brk_bench = bm.get("braking_100_0_m", 0)
-        brk_error = _error_pct(brk["model_dist_m"], brk_bench)
-        brk_verdict = _verdict(brk_error, BRAKING_TOLERANCE_PCT)
-        row_brake = (
-            f"{v.name:<28s} {'100-0制动':<10s} "
-            f"{brk['model_dist_m']:>6.1f}m  {brk_bench:>6.1f}m  "
-            f"{_fmt_pct(brk_error):>7s}  {brk_verdict:>6s}"
-        )
-
-        print(row_acc)
-        print(row_brake)
-
-        # 横向 — 不足转向梯度
-        lat = validate_lateral(v)
-        lat_bench = bm.get("kus_deg_per_g")
-        lat_error = _error_pct(lat["model_kus_deg_per_g"], lat_bench) if lat_bench else None
-        lat_verdict = _verdict(lat_error, LATERAL_TOLERANCE_PCT) if lat_error is not None else ""
-        row_lateral = (
-            f"{v.name:<28s} {'Kus 梯度':<10s} "
-            f"{lat['model_kus_deg_per_g']:>6.2f}dg  {_fmt_kus(lat_bench):>8s}  "
-            f"{_fmt_pct(lat_error):>7s}  {lat_verdict:>6s}"
-        )
-        print(row_lateral)
-
-        if v is not vehicles[-1]:
-            print(sep)
-
-    print(sep)
-
-    # ── 说明 ──
-    print()
-    print("差异解释摘要:")
-    print("  加速: " + explain_discrepancy("acceleration"))
-    print("  制动: " + explain_discrepancy("braking"))
-    print("  横向: " + explain_discrepancy("lateral"))
-    print()
-
-
-def _fmt_pct(val) -> str:
-    """格式化百分比显示。"""
-    if val is None:
-        return "  N/A"
-    return f"{val:+6.1f}%"
-
-
-def _fmt_kus(val) -> str:
-    """格式化不足转向梯度显示。"""
-    if val is None:
-        return "   N/A"
-    return f"{val:>6.1f}dg"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 差异解释
@@ -329,13 +228,13 @@ def explain_discrepancy(category: str) -> str:
             "因此加速时间存在偏差。"
         ),
         "braking": (
-            "模型使用 v²/(2μg) 公式，默认 μ=0.90 代表现代乘用车干沥青路面制动性能"
-            "（含 ABS 滑移率优化）。剩余差异源于未模拟制动热衰退、重量转移及"
+            "距离工具使用 v²/(2μg)，μ=0.90 只是调用者假设；物理状态模型使用 0.8g 制动上限。"
+            "没有模拟 ABS 滑移控制、制动热衰退、重量转移及"
             "轮胎-路面非线性摩擦特性（Pacejka 轮胎模型当前仅用于横向力计算）。"
         ),
         "lateral": (
-            "侧偏刚度 (cornering_stiffness) 从轴荷估算——前轴 ~50000 N/rad、"
-            "后轴 ~40000 N/rad，对应不足转向梯度 2-3 deg/g（典型家用轿车）。"
+            "侧偏刚度和横摆惯量是模型参数，参考车辆分别使用 80000/70000 N/rad。"
+            "历史车辆类别目标没有实测来源。"
             "差异来自侧偏刚度非实测数据、简化自行车模型忽略侧倾/载荷转移效应。"
         ),
     }

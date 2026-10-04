@@ -11,6 +11,7 @@ rl_env/
 *.dbc
 *.png
 !dashboard.png
+!docs/showcase_overview.png
 .DS_Store
 Thumbs.db
 .idea/
