@@ -5,9 +5,8 @@ CAN 总线多 ECU 仿真器：ECU 报文生成、DBC 导出、ASC 日志、DTC �
 
 from __future__ import annotations
 
-import time
 import random
-import struct
+import math
 import logging
 from datetime import datetime
 from typing import cast
@@ -18,160 +17,12 @@ logger = logging.getLogger(__name__)
 from .uds import DTC_DATABASE, ECUDiagnosticServer, run_diagnostic_session, print_diagnostic_session
 from .ecu import CoreECU
 from .can_bus import CANBus, CANFrame
-from .can_bus_load_demo import frame_bits as calc_frame_bits
+from .can_codec import frame_bits as calc_frame_bits
 
 
-# 1. CAN 帧定义
-
-CAN_MESSAGES = {
-    # 发动机 ECU —— 周期 10ms
-    "EngineData": {
-        "id": 0x0C9,
-        "cycle_ms": 10,
-        "desc": "发动机数据",
-        "signals": [
-            {"name": "节气门位置",   "start": 7,  "len": 8,  "scale": 0.4,   "offset": 0,    "unit": "%",  "byte_order": "motorola"},
-            {"name": "发动机转速",   "start": 15,  "len": 16, "scale": 0.25,  "offset": 0,    "unit": "rpm", "byte_order": "motorola"},
-            {"name": "冷却液温度",   "start": 31, "len": 8,  "scale": 1,     "offset": -40,  "unit": "degC", "byte_order": "motorola"},
-            {"name": "车速",         "start": 32, "len": 16, "scale": 0.01,  "offset": 0,    "unit": "km/h", "byte_order": "intel"},
-            {"name": "进气歧管压力", "start": 55, "len": 8,  "scale": 1,     "offset": 0,    "unit": "kPa", "byte_order": "motorola"},
-        ],
-    },
-
-    # 电池管理系统 BMS —— 周期 100ms
-    "BatteryStatus": {
-        "id": 0x180,
-        "cycle_ms": 100,
-        "desc": "电池状态",
-        "signals": [
-            {"name": "SOC",          "start": 7,  "len": 8,  "scale": 0.5,   "offset": 0,   "unit": "%",     "byte_order": "motorola"},
-            {"name": "总电压",       "start": 15,  "len": 16, "scale": 0.1,   "offset": 0,   "unit": "V",     "byte_order": "motorola"},
-            {"name": "电流",         "start": 31, "len": 16, "scale": 0.1,   "offset": -500, "unit": "A",    "byte_order": "motorola"},
-            {"name": "最高单体温度",  "start": 47, "len": 8,  "scale": 1,     "offset": -40, "unit": "degC",  "byte_order": "motorola"},
-            {"name": "最低单体温度",  "start": 55, "len": 8,  "scale": 1,     "offset": -40, "unit": "degC",  "byte_order": "motorola"},
-        ],
-    },
-
-    # ABS/ESP 制动控制器 —— 周期 20ms
-    "ABS_WheelSpeed": {
-        "id": 0x210,
-        "cycle_ms": 20,
-        "desc": "轮速与制动",
-        "signals": [
-            {"name": "左前轮速",    "start": 7,  "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
-            {"name": "右前轮速",    "start": 23, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
-            {"name": "左后轮速",    "start": 39, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
-            {"name": "右后轮速",    "start": 55, "len": 16, "scale": 0.01,  "offset": 0,   "unit": "km/h", "byte_order": "motorola"},
-        ],
-    },
-
-    # 变速箱 TCU —— 周期 50ms
-    "Transmission": {
-        "id": 0x288,
-        "cycle_ms": 50,
-        "desc": "变速箱状态",
-        "signals": [
-            {"name": "当前档位",   "start": 7,  "len": 4,  "scale": 1,   "offset": 0,   "unit": "",     "byte_order": "motorola"},
-            {"name": "变速箱油温", "start": 15,  "len": 8,  "scale": 1,   "offset": -40, "unit": "degC",  "byte_order": "motorola"},
-            {"name": "输出轴转速", "start": 23, "len": 16, "scale": 1,   "offset": 0,   "unit": "rpm",  "byte_order": "motorola"},
-        ],
-    },
-
-    # 车身控制器 BCM —— 周期 200ms
-    "BodyControl": {
-        "id": 0x320,
-        "cycle_ms": 200,
-        "desc": "车身状态",
-        "signals": [
-            {"name": "左前门",     "start": 7,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "右前门",     "start": 5,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "左后门",     "start": 3,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "右后门",     "start": 1,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "近光灯",     "start": 15,  "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "远光灯",     "start": 13, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "转向灯",     "start": 11, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-            {"name": "后备箱",     "start": 9, "len": 2,  "scale": 1, "offset": 0, "unit": "", "byte_order": "motorola"},
-        ],
-    },
-}
-
-
-# 2. CAN 帧编码/解码
-
-def encode_signal(value: float, sig: dict) -> int:
-    """将物理值编码为原始整数值"""
-    raw = int((value - sig["offset"]) / sig["scale"])
-    max_val = (1 << sig["len"]) - 1
-    return max(0, min(raw, max_val))
-
-
-def decode_signal(raw: int, sig: dict) -> float:
-    """将原始整数值解码为物理值"""
-    return round(raw * sig["scale"] + sig["offset"], 2)
-
-
-def _signal_bit_positions(start_bit: int, length: int,
-                          byte_order: str) -> list[tuple[int, int, int]]:
-    """Return (byte_idx, bit_in_byte, signal_bit_shift) for each signal bit.
-
-    DBC bit numbering: within each byte, bit 0 = LSB, bit 7 = MSB.
-    - Motorola: start_bit is the position of the signal MSB. Fill order:
-      MSB first, then step down within the byte (7 -> 0); when a byte is
-      exhausted, continue at bit 7 of the NEXT byte (byte index increases).
-    - Intel:    start_bit is the position of the signal LSB. Fill order:
-      LSB first, byte index increases.
-    """
-    positions = []
-    # Motorola "network bit number": reverse bit order inside each byte,
-    # so bit 7 of a byte maps to the lowest network bit of that byte.
-    network_start = 8 * (start_bit // 8) + (7 - start_bit % 8)
-
-    for i in range(length):
-        if byte_order == "intel":
-            bitnum = start_bit + i
-            byte_idx = bitnum // 8
-            bit_in_byte = bitnum % 8
-            shift = i  # LSB first
-        else:  # motorola
-            bitnum = network_start + i
-            byte_idx = bitnum // 8
-            bit_in_byte = 7 - bitnum % 8
-            shift = length - 1 - i  # MSB first
-
-        positions.append((byte_idx, bit_in_byte, shift))
-
-    return positions
-
-
-def build_can_frame(msg_def: dict, signal_values: list[float]) -> list[int]:
-    """根据信号值列表构建 8 字节 CAN 数据帧，支持 Motorola/Intel 字节序。"""
-    data = [0] * 8
-    for i, sig in enumerate(msg_def["signals"]):
-        raw = encode_signal(signal_values[i], sig)
-        byte_order = sig.get("byte_order", "motorola")
-        positions = _signal_bit_positions(sig["start"], sig["len"], byte_order)
-
-        for byte_idx, bit_in_byte, shift in positions:
-            if byte_idx < 8 and (raw >> shift) & 1:
-                data[byte_idx] |= (1 << bit_in_byte)
-    return data
-
-
-def parse_can_frame(data: list[int], msg_def: dict) -> dict[str, float]:
-    """根据信号定义解析 8 字节 CAN 数据帧，支持 Motorola/Intel 字节序。"""
-    result = {}
-    for sig in msg_def["signals"]:
-        raw = 0
-        byte_order = sig.get("byte_order", "motorola")
-        positions = _signal_bit_positions(sig["start"], sig["len"], byte_order)
-
-        for byte_idx, bit_in_byte, shift in positions:
-            if byte_idx < 8 and (data[byte_idx] >> bit_in_byte) & 1:
-                raw |= (1 << shift)
-
-        result[sig["name"]] = decode_signal(raw, sig)
-    return result
-
+# Backward-compatible re-exports; encoding has no scenario/ECU dependency.
+from .can_codec import (CAN_MESSAGES, encode_signal, decode_signal, build_can_frame,
+                        parse_can_frame, _signal_bit_positions)
 
 # 3. ECU 仿真器
 
@@ -182,22 +33,22 @@ VehicleECU = CoreECU
 
 def _gen_engine_data(veh, sim_time):
     """EMS 发动机数据信号值"""
-    return [veh.throttle, veh.rpm, veh.coolant_temp, veh.speed, veh._rng.randint(30, 50)]
+    return [veh.throttle, veh.rpm, veh.coolant_temp, veh.speed, veh.signal_rng.randint(30, 50)]
 
 
 def _gen_battery_status(veh, sim_time):
     """BMS 电池状态信号值"""
-    return [veh.soc, veh._rng.uniform(350, 400), veh._rng.uniform(-10, 50),
-            veh._rng.uniform(25, 35), veh._rng.uniform(22, 30)]
+    return [veh.soc, veh.signal_rng.uniform(350, 400), veh.signal_rng.uniform(-10, 50),
+            veh.signal_rng.uniform(25, 35), veh.signal_rng.uniform(22, 30)]
 
 
 def _gen_abs_wheel_speed(veh, sim_time):
     """ABS 四轮轮速信号值"""
     base = veh.speed
-    return [base + veh._rng.uniform(-0.5, 0.5),
-            base + veh._rng.uniform(-0.5, 0.5),
-            base + veh._rng.uniform(-0.3, 0.3),
-            base + veh._rng.uniform(-0.3, 0.3)]
+    return [base + veh.signal_rng.uniform(-0.5, 0.5),
+            base + veh.signal_rng.uniform(-0.5, 0.5),
+            base + veh.signal_rng.uniform(-0.3, 0.3),
+            base + veh.signal_rng.uniform(-0.3, 0.3)]
 
 
 def _gen_transmission(veh, sim_time):
@@ -240,7 +91,8 @@ def generate_frame(name, msg_def, veh, sim_time):
 
 # 5. CAN 总线仿真主循环
 
-def simulate_can_bus(duration_s: float = 5) -> dict:
+def simulate_can_bus(duration_s: float = 5, *, ecu: CoreECU | None = None,
+                     bus: CANBus | None = None) -> dict:
     """模拟 CAN 总线运行 duration_s 秒，返回结构化数据。
 
     Returns:
@@ -250,8 +102,11 @@ def simulate_can_bus(duration_s: float = 5) -> dict:
             "frames": list[dict],
         }
     """
-    veh = VehicleECU()
-    bus = CANBus()
+    if not math.isfinite(duration_s) or duration_s <= 0:
+        raise ValueError("duration_s must be finite and positive")
+    veh = ecu if ecu is not None else VehicleECU(clock=bus.clock if bus else None)
+    bus = bus if bus is not None else CANBus(clock=veh.clock)
+    veh.bind_clock(bus.clock)
     dt = 0.01  # 10ms 主循环步长
     total_steps = int(duration_s / dt)
 
@@ -277,8 +132,8 @@ def simulate_can_bus(duration_s: float = 5) -> dict:
         bus.subscribe(can_id, receiver)
 
     for step in range(total_steps):
-        sim_time = step * dt
         veh.update(dt)
+        sim_time = veh.clock.now
 
         for name, msg_def in CAN_MESSAGES.items():
             timers[name] += dt * 1000  # 累计毫秒
@@ -417,13 +272,22 @@ def generate_dbc(filepath: str = "simulated_ecu.dbc", baudrate: int = 500000) ->
 
 def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
                                error_rate: float = 0.001,
-                               asc_log: str | None = "can_log.asc") -> dict:
+                               asc_log: str | None = "can_log.asc", *,
+                               ecu: CoreECU | None = None, bus: CANBus | None = None,
+                               fault_seed: int | None = 42,
+                               dbc_path: str | None = "simulated_ecu.dbc") -> dict:
     """增强版 CAN 仿真: 总线负载统计 + ASC 日志 + 错误帧注入
 
     Returns:
         dict: {"total_frames", "error_frames", "avg_load_pct", "bus_load_samples", "dbc_info"}
     """
-    veh = VehicleECU()
+    if (not math.isfinite(duration_s) or duration_s <= 0 or baudrate <= 0
+            or not math.isfinite(error_rate) or not 0 <= error_rate <= 1):
+        raise ValueError("positive duration/baudrate and error_rate in [0, 1] required")
+    veh = ecu if ecu is not None else VehicleECU(clock=bus.clock if bus else None)
+    bus = bus if bus is not None else CANBus(clock=veh.clock)
+    veh.bind_clock(bus.clock)
+    fault_rng = random.Random(fault_seed)
     dt = 0.01
     total_steps = int(duration_s / dt)
     timers = {name: 0.0 for name in CAN_MESSAGES}
@@ -445,23 +309,25 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
     frames_this_window = 0
 
     for step in range(total_steps):
-        sim_time = step * dt
         veh.update(dt)
+        sim_time = veh.clock.now
 
         for name, msg_def in CAN_MESSAGES.items():
             timers[name] += dt * 1000
             if timers[name] >= msg_def["cycle_ms"]:  # type: ignore[operator]
                 timers[name] -= msg_def["cycle_ms"]  # type: ignore[operator]
 
-                # 错误帧注入（使用 ECU 的 RNG，保证可复现）
-                is_error = veh._rng.random() < error_rate
+                frame_data = generate_frame(name, msg_def, veh, sim_time)
+                # Fault RNG is separate from model and observation RNGs.
+                is_error = fault_rng.random() < error_rate
                 if is_error:
                     error_frames += 1
+                    bus.inject_error("injected_error", sim_time, cast(int, msg_def["id"]))
                     frame_bit_count = 6  # 主动错误标志 = 6 dominant bits
                     if asc_log:
                         asc_lines.append(f"{sim_time:11.6f} 1  ErrorFrame      E")
                 else:
-                    frame_data = generate_frame(name, msg_def, veh, sim_time)
+                    bus.send(CANFrame(cast(int, msg_def["id"]), bytes(frame_data), sim_time))
                     frame_bit_count = calc_frame_bits(len(frame_data))
                     if asc_log:
                         data_hex = " ".join(f"{b:02X}" for b in frame_data)
@@ -496,7 +362,7 @@ def simulate_can_bus_advanced(duration_s: float = 10, baudrate: int = 500000,
         logger.info("ASC 日志已禁用")
 
     # 生成 DBC
-    dbc_info = generate_dbc()
+    dbc_info = generate_dbc(dbc_path, baudrate) if dbc_path is not None else None
 
     return {
         "total_frames": total_frames,

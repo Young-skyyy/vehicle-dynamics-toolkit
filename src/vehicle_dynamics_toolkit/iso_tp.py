@@ -14,6 +14,9 @@ UDS 诊断中读取 VIN（17 字节）、刷写固件等操作均依赖此协议
 """
 
 from __future__ import annotations
+from collections import deque
+from typing import Callable
+import math
 from dataclasses import dataclass
 from enum import IntEnum
 
@@ -198,9 +201,9 @@ class IsoTPReceiver:
                  timeout_s: float = 1.0):
         if not 0 <= block_size <= 255:
             raise ValueError("Block Size must be between 0 and 255")
-        if not 0 <= st_min_ms <= 255:
-            raise ValueError("STmin must be between 0 and 255 ms")
-        if timeout_s <= 0:
+        if not 0 <= st_min_ms <= 127:
+            raise ValueError("STmin must be between 0 and 127 ms (microsecond encoding is not supported)")
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
             raise ValueError("ISO-TP timeout must be positive")
         self.block_size = block_size
         self.st_min_ms = st_min_ms
@@ -228,8 +231,11 @@ class IsoTPReceiver:
             - assembled_payload: 完成时返回完整数据，否则为 None
             - flow_control_frame: 需发回的 FC 帧（CTS/WAIT/Overflow），不需要时为 None
         """
+        if not math.isfinite(timestamp_s) or timestamp_s < 0:
+            raise ValueError("invalid ISO-TP timestamp")
         frame = parse_frame(raw_frame)
-        if (self._last_timestamp_s is not None
+        if (frame.frame_type == FrameType.CONSECUTIVE
+                and not self._complete and self._last_timestamp_s is not None
                 and timestamp_s - self._last_timestamp_s > self.timeout_s):
             self.reset()
             return None, build_flow_control(FlowControlFlag.OVERFLOW)
@@ -260,14 +266,14 @@ class IsoTPReceiver:
             return None, fc
 
         elif frame.frame_type == FrameType.CONSECUTIVE:
-            if frame.sequence_number != self._expected_seq:
+            if self._complete or not self._expected_length or frame.sequence_number != self._expected_seq:
                 # 序号不连续 — 发送 Overflow 并丢弃
                 fc = build_flow_control(FlowControlFlag.OVERFLOW)
                 self._complete = True
                 return None, fc
             if (self.st_min_ms
                     and self._last_timestamp_s is not None
-                    and timestamp_s - self._last_timestamp_s < self.st_min_ms / 1000):
+                    and timestamp_s - self._last_timestamp_s + 1e-12 < self.st_min_ms / 1000):
                 self.reset()
                 return None, build_flow_control(FlowControlFlag.OVERFLOW)
 
@@ -348,3 +354,29 @@ def encode_vin(vin: str) -> bytes:
 def decode_vin(data: bytes) -> str:
     """解码字节串为 VIN 字符串。"""
     return data.decode("ascii")
+
+
+class LegacyIsoTPAdapter:
+    """Compatibility pull interface, intentionally without CAN scheduling.
+
+    New integrations use IsoTPChannel, which owns both RX and FC-controlled TX.
+    """
+    def __init__(self, handler: Callable[[bytes], bytes]):
+        self.handler = handler
+        self.receiver = IsoTPReceiver()
+        self.pending: deque[bytes] = deque()
+
+    def feed(self, data: bytes, timestamp_s: float) -> bytes | None:
+        assembled, fc = self.receiver.feed(data, timestamp_s)
+        if fc is not None:
+            return fc
+        if assembled is None:
+            return None
+        self.pending.clear()
+        response = self.handler(assembled)
+        if response:
+            self.pending.extend(segment_payload(response))
+        return self.next_frame()
+
+    def next_frame(self) -> bytes | None:
+        return self.pending.popleft() if self.pending else None

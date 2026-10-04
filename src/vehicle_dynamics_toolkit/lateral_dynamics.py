@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import math
 
-from .vehicle import G, KMH_TO_MS
+from .vehicle import G, KMH_TO_MS, _validate_time_grid
 from .vehicle import Vehicle
 
 
 def calc_slip_angles(vehicle: Vehicle, vx_ms: float, vy_ms: float,
                      yaw_rate: float, steer_angle_rad: float) -> tuple[float, float]:
     """前后轮侧偏角 αf = (vy+a·r)/vx - δ, αr = (vy-b·r)/vx (rad)"""
+    if not math.isfinite(vx_ms) or vx_ms <= 0:
+        raise ValueError("slip angles require a finite positive longitudinal speed")
     a = vehicle.cg_to_front
     b = vehicle.cg_to_rear
     alpha_f = (vy_ms + a * yaw_rate) / vx_ms - steer_angle_rad
@@ -125,21 +127,30 @@ def calc_critical_speed(vehicle: Vehicle) -> float:
 
 def calc_steady_state_cornering(vehicle: Vehicle, vx_kmh: float,
                                 steer_angle_deg: float) -> dict:
-    """稳态转向响应（定圆/定速）"""
+    """稳态转向；半径为非负大小，转向方向由 yaw_rate 的符号表示。
+
+    静止或直行时半径为 inf。过度转向临界速度及以上没有稳定稳态解。
+    steer_angle_deg 是前轮转角，不是方向盘转角。
+    """
+    if not math.isfinite(vx_kmh) or vx_kmh < 0 or not math.isfinite(steer_angle_deg):
+        raise ValueError("speed must be finite and non-negative; steer must be finite")
     vx = vx_kmh * KMH_TO_MS
     delta = math.radians(steer_angle_deg)
     L = vehicle.wheelbase
     kus_rad, kus_deg = calc_understeer_gradient(vehicle)
 
     # 稳态横摆角速度
-    r = vx / (L + kus_rad * vx ** 2 / G) * delta  # rad/s
+    denominator = L + kus_rad * vx ** 2 / G
+    if denominator <= 1e-12:
+        raise ValueError("no stable steady state at or above critical speed")
+    r = vx / denominator * delta  # rad/s
 
     # 侧向加速度
     ay = vx * r  # m/s²
 
     # 转弯半径
-    curvature = r / vx  # 1/m
-    radius = 1 / curvature if curvature > 1e-9 else float("inf")
+    curvature = r / vx if vx > 0 else 0.0  # 1/m
+    radius = 1 / abs(curvature) if abs(curvature) > 1e-12 else float("inf")
 
     return {
         "speed_kmh": vx_kmh,
@@ -175,7 +186,7 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
                         dt: float = 0.01,
                         tire_model: str = "linear",
                         method: str = "euler") -> list[dict]:
-    """阶跃转向瞬态响应：给定车速和方向盘转角，仿真横摆响应
+    """阶跃转向瞬态响应：给定车速和前轮转角，仿真横摆响应
 
     使用 2-DOF 自行车模型。
     状态变量: [vy, r]（侧向速度、横摆角速度）
@@ -183,7 +194,7 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
     Args:
         vehicle:          车辆对象
         vx_kmh:           纵向车速 (km/h)
-        steer_angle_deg:  方向盘转角 (deg)
+        steer_angle_deg:  前轮转角 (deg)
         duration_s:       仿真时长 (s)
         dt:               积分步长 (s)
         tire_model:       轮胎模型 "linear"（线性 Fy=-Cα·α）或 "pacejka"（魔术公式）
@@ -192,6 +203,11 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
     Returns:
         list[dict]，每步含: time, vy, yaw_rate_rad, yaw_rate_deg, lateral_acc_g
     """
+    _validate_time_grid(dt, duration_s)
+    if not math.isfinite(vx_kmh) or vx_kmh < 0 or not math.isfinite(steer_angle_deg):
+        raise ValueError("invalid speed or steering angle")
+    if method not in ("euler", "rk4") or tire_model not in ("linear", "pacejka"):
+        raise ValueError("unsupported integrator or tire model")
     vx = vx_kmh * KMH_TO_MS
     delta = math.radians(steer_angle_deg)
     m = vehicle.mass
@@ -206,40 +222,59 @@ def simulate_step_steer(vehicle: Vehicle, vx_kmh: float,
     r = 0.0
 
     history: list[dict] = []
-    t = 0.0
-    while t <= duration_s:
+    steps = max(1, math.ceil(duration_s / dt - 1e-12)) if duration_s > 0 else 0
+    for index in range(steps + 1):
+        t = min(index * dt, duration_s) if index < steps else duration_s
+        dvy, _ = _step_derivatives(
+            vehicle, vx, vy, r, delta, m, Iz, a, b, Cf, Cr, tire_model)
         history.append({
             "time": round(t, 4),
             "vy": round(vy, 6),
             "yaw_rate_rad": round(r, 6),
             "yaw_rate_deg": round(math.degrees(r), 3),
-            "lateral_acc_g": round(vx * r / G, 6),
+            "lateral_acc_g": round((dvy + vx * r) / G, 6),
         })
 
-        if method == "rk4":
-            k1_vy, k1_r = _step_derivatives(
-                vehicle, vx, vy, r, delta, m, Iz, a, b, Cf, Cr, tire_model)
-            k2_vy, k2_r = _step_derivatives(
-                vehicle, vx, vy + 0.5 * dt * k1_vy, r + 0.5 * dt * k1_r,
-                delta, m, Iz, a, b, Cf, Cr, tire_model)
-            k3_vy, k3_r = _step_derivatives(
-                vehicle, vx, vy + 0.5 * dt * k2_vy, r + 0.5 * dt * k2_r,
-                delta, m, Iz, a, b, Cf, Cr, tire_model)
-            k4_vy, k4_r = _step_derivatives(
-                vehicle, vx, vy + dt * k3_vy, r + dt * k3_r,
-                delta, m, Iz, a, b, Cf, Cr, tire_model)
-            vy += (dt / 6) * (k1_vy + 2 * k2_vy + 2 * k3_vy + k4_vy)
-            r += (dt / 6) * (k1_r + 2 * k2_r + 2 * k3_r + k4_r)
-        else:
-            # 欧拉积分（默认）
-            dvy, dr = _step_derivatives(
-                vehicle, vx, vy, r, delta, m, Iz, a, b, Cf, Cr, tire_model)
-            vy += dvy * dt
-            r += dr * dt
-
-        t += dt
+        if t >= duration_s:
+            break
+        h = min(dt, duration_s - t)
+        vy, r = integrate_lateral(vehicle, vx, vy, r, delta, h, tire_model, method)
 
     return history
+
+
+def integrate_lateral(vehicle: Vehicle, vx: float, vy: float, r: float,
+                      delta: float, dt: float, tire_model: str = "linear",
+                      method: str = "euler") -> tuple[float, float]:
+    """Integrate [vy, r] using substeps limited by the lateral relaxation rate.
+
+    This avoids the explicit integrator's low-speed instability. It does not
+    extend the bicycle model to reverse driving or combined tire slip.
+    """
+    if vx <= 0:
+        return 0.0, 0.0
+    m, iz = vehicle.mass, vehicle.yaw_inertia
+    a, b = vehicle.cg_to_front, vehicle.cg_to_rear
+    cf, cr = vehicle.cornering_stiffness_f, vehicle.cornering_stiffness_r
+    rate = (cf + cr) / (m * vx) + (a * a * cf + b * b * cr) / (iz * vx)
+    steps = max(1, math.ceil(dt * rate / 0.2))
+    h = dt / steps
+
+    def derivatives(y: float, yaw: float) -> tuple[float, float]:
+        return _step_derivatives(vehicle, vx, y, yaw, delta, m, iz, a, b, cf, cr, tire_model)
+
+    for _ in range(steps):
+        k1y, k1r = derivatives(vy, r)
+        if method == "rk4":
+            k2y, k2r = derivatives(vy + h * k1y / 2, r + h * k1r / 2)
+            k3y, k3r = derivatives(vy + h * k2y / 2, r + h * k2r / 2)
+            k4y, k4r = derivatives(vy + h * k3y, r + h * k3r)
+            vy += h * (k1y + 2 * k2y + 2 * k3y + k4y) / 6
+            r += h * (k1r + 2 * k2r + 2 * k3r + k4r) / 6
+        else:
+            vy += h * k1y
+            r += h * k1r
+    return vy, r
 
 
 def _classify_steer(kus_deg_per_g: float) -> str:

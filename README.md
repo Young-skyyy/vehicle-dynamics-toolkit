@@ -13,6 +13,12 @@
 
 ## Architecture
 
+- **Physical plant:** `simulation.py` / `vehicle.py` / `lateral_dynamics.py`, with SI state and normalized controls; C++ replay shares the ROS2 core.
+- **Protocol fixture:** `signal_model.py` generates synthetic ECU signals; `CoreECU` adds a simulation clock and UDS facade. It is not the calibrated physical plant.
+- **Transport:** `can_codec.py` owns encoding, `CANBus` delivers timestamp-ordered events, and `IsoTPChannel` owns segmentation, flow control and reassembly on both sides. UDS receives complete payloads.
+- **Scenarios and outputs:** `can_demo.py` composes those components. Pass `asc_log=None, dbc_path=None` for an advanced run without output files.
+- **Native FMU:** a separate experimental C signal model, packaged with the wheel. Its behavior is not covered by Python/C++ dynamics parity.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Layer 1 — Python Analysis & Simulation                         │
@@ -26,7 +32,9 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Layer 2 C++ nodes port algorithms from Layer 1 Python models. Validation between layers uses [`scripts/compare_py_cpp.py`](scripts/compare_py_cpp.py): Python generates per-second reference JSON with the same default parameters as C++, then C++ output from recorded ROS2 bags is compared field-by-field against the reference. The C++ node measures real-time jitter to quantify timing deviations.
+The ROS2 dynamics node and a headless C++ replay executable share `dynamics.hpp`. Run `python scripts/compare_py_cpp.py --check` to compile that core, replay identical control samples in C++ and Python, and compare every output sample. Six maneuvers at two step sizes cover launch, coast, braking, left/right steering and braking to rest while turning. Missing samples, non-finite values, misaligned timestamps or excessive error fail the command and CI. This verifies the default linear-tire dynamics core, not ROS transport timing, UDS, FMU or real-vehicle accuracy.
+
+See [dynamics validation and model limits](docs/dynamics_validation.md) and [module boundaries, units and simulation time](docs/architecture.md).
 
 ---
 ## Test Strategy — Three Validation Decisions Worth Noticing
@@ -77,12 +85,12 @@ This layout matches the DBC standard as implemented by Vector tooling and `canto
 
 ### 3. Model Validation — Self-Awareness Over Self-Promotion
 
-The 6-benchmark validation table in the section above is not just a green checkmark gallery. Each discrepancy is explained:
+The following comparisons expose model limitations; they are not independent vehicle certification:
 
 | Discrepancy | Actual | Model | Why |
 |---|---|---|---|
 | Civic 100–0 braking | 37.0 m | 43.7 m (+18%) | Braking uses `v²/(2μg)` with fixed μ=0.90. Real braking involves weight transfer (adds load to front axle → higher peak μ), brake force distribution, tire nonlinearity at the friction ellipse limit, and thermal fade resistance — none of which are modeled here. |
-| Tiguan 0–100 acceleration | 9.0 s | 9.5 s (+5.6%) | Turbo torque plateau flattens the mid-range but drops faster at high RPM than the NA curve. The model captures this qualitatively but the exact falloff rate depends on turbo sizing (A/R ratio, boost curve) — which varies across the EA888 engine family. |
+| Tiguan 0–100 acceleration | 9.0 s | 10.7 s (+18.9%) | Starting from true rest exposes the simplified idle-torque launch model and uncalibrated torque/gear parameters. This exceeds the existing tolerance. |
 
 Every FAIL-to-PASS fix (Tiguan engine type, braking friction coefficient) is documented in the [CHANGELOG](CHANGELOG.md). The validation module exists to expose model limitations, not to pretend they don't exist.
 
@@ -114,13 +122,13 @@ A 2-DOF (degrees of freedom) bicycle model computes slip angles at front and rea
 
 ## Validation Against Published Vehicle Specifications
 
-The longitudinal and lateral models were tested against published specifications for three production vehicles. All 9 benchmarks pass within tolerance.
+The following is a reproducible sanity check against the repository’s stored benchmark values. The lateral targets are category estimates, not measured traces. With the corrected standstill launch, 7 of 9 checks pass; Camry and Tiguan acceleration fail the unchanged 15% tolerance. No parameters or tolerances were retuned to conceal those failures.
 
 | Vehicle | Metric | Model | Benchmark | Error | Verdict |
 |--------:|--------|:-----:|:---------:|:-----:|:-------:|
-| Toyota Camry 2.0L | 0–100 km/h | 10.4 s | 9.5 s | +9.5% | PASS |
-| Honda Civic 1.5T | 0–100 km/h | 7.1 s | 8.0 s | −11.3% | PASS |
-| VW Tiguan 2.0T | 0–100 km/h | 9.5 s | 9.0 s | +5.6% | PASS |
+| Toyota Camry 2.0L | 0–100 km/h | 11.6 s | 9.5 s | +22.1% | FAIL |
+| Honda Civic 1.5T | 0–100 km/h | 7.8 s | 8.0 s | −2.5% | PASS |
+| VW Tiguan 2.0T | 0–100 km/h | 10.7 s | 9.0 s | +18.9% | FAIL |
 | Toyota Camry 2.0L | 100–0 km/h | 43.7 m | 39.0 m | +12.1% | PASS |
 | Honda Civic 1.5T | 100–0 km/h | 43.7 m | 37.0 m | +18.1% | PASS |
 | VW Tiguan 2.0T | 100–0 km/h | 43.7 m | 39.0 m | +12.1% | PASS |
@@ -175,7 +183,7 @@ python3 src/uds_server/scripts/uds_test_client.py EMS
 
 **243 pytest cases** across 5 test modules, covering:
 
-- **Vehicle dynamics** — engine torque, wheel force, acceleration (0–100 km/h), braking distance, resistance (SAE J2263 dynamic rolling), power breakdown by source, understeer gradient, characteristic/critical speed, steady-state cornering, step-steer transient response, Pacejka tire model (longitudinal and combined slip)
+- **Vehicle dynamics** — engine torque, wheel force, acceleration (0–100 km/h), braking distance, resistance (SAE J2263 dynamic rolling), power breakdown by source, understeer gradient, characteristic/critical speed, steady-state cornering, step-steer transient response, Pacejka tire model (pure lateral slip in Python)
 - **CAN bus** — signal encode/decode (Motorola + Intel byte order), frame build/parse, multi-ECU simulation, DBC file generation, bus load calculation, overflow detection, edge cases
 - **UDS diagnostics** — DTC status byte, session state machine, ReadDataByIdentifier, ReadDTCInformation, ECUReset, SecurityAccess seed/key, negative response codes (NRC), service permission enforcement, ISO-TP multi-frame VIN read
 - **Real-world benchmarks** — validation against Camry, Civic, Tiguan published data
@@ -245,7 +253,7 @@ The ROS2 C++ build is also verified in CI — a separate job on `ubuntu-22.04` c
 
 ## ROS2 Real-Time Simulation
 
-The C++ `vehicle_dynamics_node` runs a 100 Hz closed-loop simulation using `rclcpp` timers. It publishes `VehicleState` (14 fields: position, velocity, acceleration, yaw rate, gear, engine RPM, slip angles, etc.) and subscribes to `VehicleControl` (throttle, brake, steering angle). A built-in jitter monitor tracks cycle-to-cycle timing and reports P50/P95/P99 latencies, so real-time deviation can be measured directly from log output.
+The C++ `vehicle_dynamics_node` advances a fixed-step simulation using `rclcpp` wall timers (100 Hz by default). It publishes velocity, acceleration, world position, heading and powertrain state, and subscribes to throttle, brake and front-wheel steering controls. It uses linear tires, plus a kinematic approximation below 1 m/s. A steady-clock jitter monitor reports an exponential moving average, lifetime maximum and recent-window P99; no hard real-time guarantee is made.
 
 The `uds_server` node exposes ISO 14229 services (0x10, 0x11, 0x22, 0x27, 0x19, 0x3E) for 5 simulated ECUs via ROS2 service calls, with S3 session timeout enforcement. Every diagnostic response can be validated against the Python reference to confirm algorithm fidelity. Multi-frame VIN reads (0xF190, 17 bytes) are handled by an independent [`iso_tp.hpp/cpp`](ros2_ws/src/uds_server/src/iso_tp.hpp) module with `namespace iso_tp`.
 
@@ -257,11 +265,11 @@ The C++ node tracks cycle-to-cycle timing with microsecond resolution. Each `ste
 # Enable jitter publishing:
 ros2 param set /vehicle_dynamics_node publish_jitter true
 
-# Expected output (every 10 seconds):
+# Illustrative output (every second; actual values depend on the host):
 JITTER STATS: avg=47us max=213us P99=123us samples=3000
 ```
 
-Jitter is computed as `|actual_dt - expected_dt|` in microseconds, smoothed with exponential moving average (α=0.01), and tracked in a 100-sample sliding window for P99 percentile calculation. The ceiling of a non-real-time Linux kernel with `rclcpp::WallTimer` is typically 50-200μs mean jitter under moderate system load.
+Jitter is computed as `|actual_dt - expected_dt|` in microseconds, smoothed with exponential moving average (α=0.01), and tracked in a 100-sample sliding window for P99 percentile calculation. These statistics measure scheduling variability, not algorithm accuracy or a guaranteed deadline.
 
 ---
 

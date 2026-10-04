@@ -92,6 +92,11 @@ def validate_acceleration(vehicle: Vehicle, target_kmh: float = 100) -> dict:
     """
     result = simulate_acceleration(vehicle, target_speed_kmh=target_kmh)
     model_time = result["elapsed_s"]
+    if not result["reached_target"]:
+        return {
+            "model_time_s": model_time, "benchmark_time_s": None,
+            "error_pct": None, "verdict": "INCOMPLETE (未达到目标车速)",
+        }
 
     benchmark = _lookup_benchmark(vehicle)
     if benchmark is None:

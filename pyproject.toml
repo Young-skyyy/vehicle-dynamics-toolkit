@@ -46,6 +46,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",
+    "cantools>=39.0",
 ]
 
 [project.scripts]
@@ -61,3 +62,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.setuptools.package-data]
+vehicle_dynamics_toolkit = ["native/*.c"]

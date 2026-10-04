@@ -1,119 +1,133 @@
-"""UDS over CAN adapters connecting the tester, CAN bus and virtual ECU."""
-
+"""ISO-TP transport ownership is independent of the UDS service endpoint."""
 from __future__ import annotations
-
+from collections import deque
+from typing import Callable
 from .can_bus import CANBus, CANFrame
 from .ecu import CoreECU
-from .iso_tp import (
-    FlowControlFlag,
-    FrameType,
-    IsoTPReceiver,
-    parse_frame,
-    segment_payload,
-)
+from .iso_tp import FlowControlFlag, FrameType, IsoTPReceiver, parse_frame, segment_payload
 
+class IsoTPChannel:
+    """One duplex transport, shared by the ECU and tester adapters.
 
-class VirtualECUNode:
-    """Expose one CoreECU diagnostic endpoint on two CAN identifiers."""
+    Supports classic CAN, CTS/WAIT/OVERFLOW, block size, millisecond STmin
+    (0..127), RX timeouts and bounded FC waits. No CAN FD/extended addressing.
+    """
+    def __init__(self, bus: CANBus, tx_id: int, rx_id: int,
+                 on_payload: Callable[[bytes, float], None], block_size: int = 0,
+                 st_min_ms: int = 0, timeout_s: float = 1.0):
+        self.bus, self.tx_id = bus, tx_id
+        self.on_payload = on_payload
+        self.receiver = IsoTPReceiver(block_size, st_min_ms, timeout_s)
+        self.timeout_s = timeout_s
+        self.pending: deque[bytes] = deque()
+        self.last_tx = bus.clock.now
+        self.error: str | None = None
+        self.wait_count = 0
+        bus.subscribe(rx_id, self._receive)
 
-    def __init__(self, ecu: CoreECU, bus: CANBus, request_id: int = 0x7E0,
-                 response_id: int = 0x7E8) -> None:
-        self.ecu = ecu
-        self.bus = bus
-        self.request_id = request_id
-        self.response_id = response_id
-        self._response_block_size = 0
-        self._response_st_min_ms = 0
-        self._response_frames_in_block = 0
-        self._next_response_timestamp_s = 0.0
-        bus.subscribe(request_id, self._on_request_frame)
+    def reset(self) -> None:
+        self.pending.clear()
+        self.receiver.reset()
+        self.error = None
+        self.wait_count = 0
 
     def _send(self, data: bytes, timestamp_s: float) -> None:
-        self.bus.send(CANFrame(self.response_id, data, timestamp_s))
+        self.bus.send(CANFrame(self.tx_id, data, timestamp_s))
 
-    def _on_request_frame(self, frame: CANFrame) -> None:
-        parsed = parse_frame(frame.data)
-        if parsed.frame_type == FrameType.FLOW_CONTROL:
-            if parsed.fc_flag != FlowControlFlag.CTS:
-                return
-            self._response_block_size = parsed.block_size
-            self._response_st_min_ms = parsed.st_min_ms
-            self._response_frames_in_block = 0
-            next_frame = self.ecu.get_next_response_frame()
-            while next_frame is not None:
-                self._next_response_timestamp_s = max(
-                    frame.timestamp_s,
-                    self._next_response_timestamp_s,
-                ) + self._response_st_min_ms / 1000
-                self._send(next_frame, self._next_response_timestamp_s)
-                self._response_frames_in_block += 1
-                if (self._response_block_size
-                        and self._response_frames_in_block >= self._response_block_size):
-                    return
-                next_frame = self.ecu.get_next_response_frame()
+    def send_payload(self, payload: bytes, timestamp_s: float) -> None:
+        self.pending.clear()
+        self.error = None
+        self.wait_count = 0
+        if not payload:  # UDS suppress-positive-response means no CAN frame.
             return
-        response = self.ecu.handle_iso_tp_frame(frame.data)
-        if response is not None:
-            self._send(response, frame.timestamp_s)
+        frames = segment_payload(payload)
+        self.pending.extend(frames[1:])
+        self.last_tx = timestamp_s
+        self._send(frames[0], timestamp_s)
 
+    def _receive(self, frame: CANFrame) -> None:
+        try:
+            parsed = parse_frame(frame.data)
+            if parsed.frame_type == FrameType.FLOW_CONTROL:
+                if not self.pending:
+                    return
+                if frame.timestamp_s - self.last_tx > self.timeout_s:
+                    self.error = "flow-control timeout"
+                    self.pending.clear()
+                    return
+                if parsed.fc_flag == FlowControlFlag.WAIT:
+                    self.wait_count += 1
+                    if self.wait_count > 3:
+                        self.pending.clear()
+                        self.error = "flow-control WAIT limit exceeded"
+                    return
+                if parsed.fc_flag != FlowControlFlag.CTS or parsed.st_min_ms > 127:
+                    self.error = "flow control rejected or unsupported STmin"
+                    self.pending.clear()
+                    return
+                count = parsed.block_size or len(self.pending)
+                for _ in range(min(count, len(self.pending))):
+                    data = self.pending.popleft()
+                    self.last_tx = max(frame.timestamp_s, self.last_tx) + parsed.st_min_ms / 1000
+                    self._send(data, self.last_tx)
+                return
+            assembled, fc = self.receiver.feed(frame.data, frame.timestamp_s)
+            if fc is not None:
+                self._send(fc, frame.timestamp_s)
+            if assembled is not None:
+                self.on_payload(assembled, frame.timestamp_s)
+        except ValueError as exc:
+            self.reset()
+            self.error = str(exc)
+
+class VirtualECUNode:
+    def __init__(self, ecu: CoreECU, bus: CANBus, request_id: int = 0x7E0,
+                 response_id: int = 0x7E8, request_block_size: int = 0,
+                 request_st_min_ms: int = 0, timeout_s: float = 1.0) -> None:
+        self.ecu, self.bus = ecu, bus
+        self.request_id, self.response_id = request_id, response_id
+        ecu.bind_clock(bus.clock)
+        self.transport = IsoTPChannel(bus, response_id, request_id, self._request,
+                                      request_block_size, request_st_min_ms, timeout_s)
+
+    def _request(self, payload: bytes, timestamp_s: float) -> None:
+        self.transport.send_payload(self.ecu.handle_request(payload), timestamp_s)
 
 class CANDiagnosticTester:
-    """Send UDS payloads through CANBus instead of calling the ECU directly."""
-
     def __init__(self, bus: CANBus, request_id: int = 0x7E0,
                  response_id: int = 0x7E8, response_block_size: int = 0,
                  response_st_min_ms: int = 0, timeout_s: float = 1.0) -> None:
         self.bus = bus
-        self.request_id = request_id
-        self.response_id = response_id
-        self._receiver = IsoTPReceiver(
-            block_size=response_block_size,
-            st_min_ms=response_st_min_ms,
-            timeout_s=timeout_s,
-        )
+        self.request_id, self.response_id = request_id, response_id
         self._responses: list[bytes] = []
-        self._request_flow_control: bytes | None = None
         self._error: CANFrame | None = None
-        bus.subscribe(response_id, self._on_response_frame)
+        self.transport = IsoTPChannel(bus, request_id, response_id, self._response,
+                                      response_block_size, response_st_min_ms, timeout_s)
         bus.subscribe_errors(self._on_error_frame)
 
-    def _send(self, data: bytes, timestamp_s: float = 0.0) -> None:
-        self.bus.send(CANFrame(self.request_id, data, timestamp_s))
+    def _response(self, payload: bytes, timestamp_s: float) -> None:
+        self._responses.append(payload)
 
     def _on_error_frame(self, frame: CANFrame) -> None:
         self._error = frame
 
-    def _on_response_frame(self, frame: CANFrame) -> None:
-        parsed = parse_frame(frame.data)
-        if parsed.frame_type == FrameType.FLOW_CONTROL:
-            self._request_flow_control = frame.data
-            return
-        assembled, flow_control = self._receiver.feed(frame.data, frame.timestamp_s)
-        if flow_control is not None:
-            self._send(flow_control, frame.timestamp_s)
-        if assembled is not None:
-            self._responses.append(assembled)
-
     def last_error(self) -> CANFrame | None:
-        """Return the latest observed CAN error frame, if any."""
         return self._error
 
-    def request(self, payload: bytes, timestamp_s: float = 0.0) -> bytes:
-        """Send one complete UDS payload and return its reassembled response."""
+    def request(self, payload: bytes, timestamp_s: float | None = None,
+                expect_response: bool = True) -> bytes:
+        if not payload:
+            raise ValueError("UDS request must not be empty")
         self._responses.clear()
-        self._receiver.reset()
-        self._request_flow_control = None
         self._error = None
-        frames = segment_payload(payload)
-        self._send(frames[0], timestamp_s)
-        if len(frames) > 1:
-            if self._request_flow_control is None:
-                raise RuntimeError("ECU did not return ISO-TP flow control")
-            flow_control = parse_frame(self._request_flow_control)
-            if flow_control.fc_flag != FlowControlFlag.CTS:
-                raise RuntimeError("ECU did not accept ISO-TP request")
-            for frame_data in frames[1:]:
-                self._send(frame_data, timestamp_s)
-        if not self._responses:
-            raise RuntimeError("ECU did not return a UDS response")
-        return self._responses[-1]
+        self.transport.reset()
+        timestamp = self.bus.clock.now if timestamp_s is None else timestamp_s
+        self.transport.send_payload(payload, timestamp)
+        if self._responses:
+            return self._responses[-1]
+        if not expect_response and not self.transport.pending and self.transport.error is None:
+            return b""
+        self.bus.run_until(self.bus.clock.now + self.transport.timeout_s)
+        error = self.transport.error or "ECU did not return a UDS response before timeout"
+        self.transport.reset()
+        raise TimeoutError(error)

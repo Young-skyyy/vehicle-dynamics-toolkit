@@ -113,3 +113,8 @@ from .iso_tp import (
 )
 
 __version__ = "3.0.0"
+
+from .timing import SimulationClock
+from .signal_model import SignalModel
+from .simulation import DynamicsModel, DynamicsState
+from .uds import DIDDefinition

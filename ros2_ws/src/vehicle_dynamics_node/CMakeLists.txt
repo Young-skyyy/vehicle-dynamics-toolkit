@@ -29,8 +29,12 @@ ament_target_dependencies(dynamics_node
   vehicle_msgs
 )
 
+# Headless replay of the same header used by dynamics_node (no ROS in the core).
+add_executable(dynamics_runner src/dynamics_runner.cpp)
+target_include_directories(dynamics_runner PRIVATE include)
+
 # 安装可执行文件
-install(TARGETS dynamics_node
+install(TARGETS dynamics_node dynamics_runner
   DESTINATION lib/${PROJECT_NAME}
 )
 
