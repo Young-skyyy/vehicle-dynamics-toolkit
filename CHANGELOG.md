@@ -1,5 +1,7 @@
 # Changelog
 
+- Fix platform-specific FMU unloading type checks; CI checks Linux and Windows targets.
+
 ## 2026-10-04 — Reproducible physical CAN/UDS showcase
 
 - Add one-command launch/turn/coast/brake scenario with optional native FMU comparison.

@@ -40,7 +40,9 @@ jobs:
         run: pip install mypy
 
       - name: Type check
-        run: python -m mypy --ignore-missing-imports src/vehicle_dynamics_toolkit/
+        run: |
+          python -m mypy --platform linux --ignore-missing-imports src/vehicle_dynamics_toolkit/
+          python -m mypy --platform win32 --ignore-missing-imports src/vehicle_dynamics_toolkit/
 
   # ── 真正编译、运行、逐样本比较 C++ 与 Python ──
   dynamics-parity:

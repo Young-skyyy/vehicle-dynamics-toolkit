@@ -2,7 +2,7 @@
 from __future__ import annotations
 import ctypes
 import _ctypes
-import os
+import sys
 from pathlib import Path
 from typing import Any
 from .fmu import FMU_GUID, STATE_REFS
@@ -84,10 +84,10 @@ class FMUPlant:
         if self.component:
             self.lib.fmi2FreeInstance(self.component)
             self.component = None
-        if os.name == "nt":
+        if sys.platform == "win32":
             _ctypes.FreeLibrary(self.lib._handle)
         else:
-            getattr(_ctypes, "dlclose")(self.lib._handle)
+            _ctypes.dlclose(self.lib._handle)
 
     def __enter__(self):
         return self
