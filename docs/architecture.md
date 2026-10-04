@@ -21,9 +21,14 @@ CAN and UDS encode the same CoreECU values; they never run their own vehicle upd
 DID identifiers/scales in this project are a teaching profile, not OEM definitions.
 `DIDDefinition` declares byte length, signedness, scale, offset, unit and access rules.
 
-These model families are intentionally named separately. CoreECU/FMU outputs must
-not be treated as a validated substitute for DynamicsModel outputs. The standalone
-C++ UDS server is also a separate demo, not an adapter around Python CoreECU.
+The physical path is `DriverInput -> DynamicsModel -> DynamicsECU -> CAN/UDS`.
+Construct `DynamicsECU(model=DynamicsModel(...))`, attach it with
+`VirtualECUNode(ecu, CANBus(clock=ecu.clock))`, and call `ecu.step(dt, DriverInput(...))`.
+CAN speed is converted from m/s to km/h only at the adapter boundary; RPM/gear
+come from the same plant state. Legacy `update(..., throttle=50)` explicitly
+converts percentages to normalized commands. Coolant and SOC stay constant because
+there is no thermal/energy plant. Synthetic auxiliary/noise signals stay labeled
+as protocol fixtures. The standalone C++ UDS server remains an independent demo.
 
 ## Time ownership
 
@@ -31,8 +36,13 @@ C++ UDS server is also a separate demo, not an adapter around Python CoreECU.
 backward movement. `CoreECU.update(dt)` advances its state and clock once. A
 `VirtualECUNode` binds its ECU and UDS session to the bus clock, provided they start
 at the same time. Supply `CANBus(clock=ecu.clock)` when attaching an already-stepped
-ECU. CAN scheduling advances protocol time; it does not silently integrate the plant.
-Scenarios own plant stepping explicitly.
+ECU. CAN scheduling advances protocol time. DynamicsECU catches up to the clock before
+the next step, snapshot, CAN encoding or UDS request, holding its last command
+across the gap in equal substeps no larger than 0.1 s. The new command then applies
+to the requested interval; communication delay cannot freeze vehicle time.
+Reads at the same timestamp do not step the plant. A scenario must use the same
+time grid/control timeline when comparing adapters: adding delayed protocol events
+can change numerical substep boundaries.
 
 `CANBus.schedule(frame)` enqueues without executing; `run_until(t)` delivers events
 through t and advances the clock. `send(frame)` drains the queue for legacy synchronous
@@ -76,24 +86,41 @@ periodic traffic; use the bus filter to affect diagnostic frames as well.
 
 ## Native FMU and packaging
 
-`native/ecu_fmu.c` ships as package data. `build_fmu` locates it inside the installed
-package, not by walking back to the source checkout. Windows/Linux x86-64 are the
-supported build targets. Integer gear output is discrete; outputs specify exact
-initial values. fmi2GetTypesPlatform returns `default`, as specified in the
-[FMI 2.0 headers](https://github.com/modelica/fmi-standard/blob/v2.0.5/headers/fmi2TypesPlatform.h).
+`native/ecu_fmu.cpp` and `native/dynamics_core.hpp` ship in the wheel. The C++17
+header is canonical for ROS2, the headless runner and FMU; the ROS2 include is a
+compatibility wrapper. The FMU builder loads resources from the installed package.
+Windows/Linux x86-64 are supported; pass `--compiler c++` or a Zig executable.
 
-The wrapper remains experimental: its signal equations differ from both Python
-models and it implements a subset of FMI entry points. The packaging test validates
-native load, initialization, stepping and reset via ctypes. It does not certify
-compatibility with every FMI importer or full FMI lifecycle conformance.
+The v2 GUID is `{vehicle-dynamics-toolkit-vehicle-plant-v2}`. This is an intentional
+interface break: regenerate old v1 FMUs. Throttle/brake inputs (refs 1/2) now use
+0..1; steering (8) uses front-wheel radians. Speed (3) remains km/h; SI outputs
+(9..18) expose velocity, acceleration, yaw, heading, position, time and torque.
+RPM (4), gear (6), coolant (5) and SOC (7) retain their names, but coolant/SOC are
+constant auxiliary placeholders. Initial speed (19) is a fixed initialization
+parameter. The FMU supports the reference vehicle only; custom Python vehicles
+are not automatically exported. The physical step accepts 0 < dt <= 0.1 s.
+
+FMI initialization/termination/reset and time consistency are checked. Invalid
+input batches/unknown references return error without partially applying controls.
+Units and ranges are declared in XML; state outputs have calculated initial values
+because initial speed/start time can differ from zero. The wrapper remains
+experimental: no serialized FMU state, derivative interpolation or asynchronous
+step support, and no claim of universal importer/FMI conformance.
 
 ## Verification
 
-- `python -m pytest tests -q`: existing behavior plus state/time/fault/transport regressions.
-- `python -m mypy --ignore-missing-imports src/vehicle_dynamics_toolkit/`: package type checks.
-- `python scripts/compare_py_cpp.py --check`: compile and compare 12 scenarios, 18,600 samples.
-- Build a wheel, install it outside this checkout, then run
-  `python /path/to/repository/scripts/check_fmu_install.py --require-installed --compiler cc`.
-  This exercises the installed native source resource rather than an editable checkout.
-- CI runs Python tests, mypy, parity, ROS2 builds and wheel/FMU smoke validation
-  (the job is named `wheel-fmu`). Local Windows validation does not replace the ROS2 job.
+`python -m vehicle_dynamics_toolkit.showcase` is the reproducible demonstration:
+a fixed 20-second control timeline, physical ECU observations, reception-gap
+detection and UDS fault recovery. `--with-fmu --compiler c++` adds native replay.
+Evidence lives in `build/showcase`; it is simulation output, not measured telemetry.
+
+- `python -m pytest tests -q`: behavior, independent baselines and integration regressions.
+- `python -m mypy --ignore-missing-imports src/vehicle_dynamics_toolkit/`: type checks.
+- `python scripts/validate_physics.py`: independent analytical verification.
+- `python scripts/compare_py_cpp.py --check`: 12 cases, 18,600 physical samples.
+- Build/install a wheel outside the checkout, then run
+  `python /path/to/repository/scripts/check_fmu_install.py --require-installed --compiler c++`.
+  Every sample goes through Python, native FMU and DynamicsECU; 198 observations
+  exercise actual CAN delivery and UDS-over-ISO-TP speed/RPM reads within quantization.
+- CI runs these checks plus ROS2 builds. Local Windows core checks do not replace
+  the ROS2 job or a measured real-vehicle validation.

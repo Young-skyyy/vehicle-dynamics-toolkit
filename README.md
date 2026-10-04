@@ -11,19 +11,59 @@
 
 ---
 
+## Reproducible End-to-End Showcase
+
+![Reference-vehicle showcase: physical state and CAN observations](docs/showcase_overview.png)
+
+Preview from the default simulation below; this is not measured vehicle data.
+
+```bash
+pip install -e ".[test]"
+python -m vehicle_dynamics_toolkit.showcase
+```
+
+The reference vehicle launches, turns, coasts and brakes to rest over a fixed
+20-second control timeline. CAN and UDS expose the same physical speed/RPM.
+A deliberate missing CAN frame is detected from the reception interval; an
+injected P0301 diagnostic status is read and cleared over UDS/ISO-TP. These faults
+exercise transport and diagnostics; they do not simulate an engine misfire's
+mechanical effect. Corrupt observations, failed fault recovery or physical
+disagreement make the command fail.
+
+Results in `build/showcase/`: `overview.png` (physical trajectory and controls),
+`states.csv` (SI state plus CAN/UDS observations), `can.asc` (delivered periodic and
+diagnostic traffic), `signals.dbc`, `events.json` and `report.json`. A missing frame
+stays blank in the CSV instead of being filled in. The report labels FMU as
+`NOT_RUN` unless requested and real-vehicle accuracy as `NOT_VALIDATED`.
+
+To compile and compare the native FMU during this same run:
+
+```bash
+python -m vehicle_dynamics_toolkit.showcase --with-fmu --compiler c++
+```
+
+Windows also supports `--compiler "path/to/zig.exe"`. Use `--no-plot` for a
+headless run without the overview figure, and `--output` to select the result
+directory. After installation, `vehicle-dynamics-showcase` is the equivalent
+console command. CI runs the showcase with the FMU from an installed wheel and
+retains its output as an artifact.
+
+---
+
 ## Architecture
 
 - **Physical plant:** `simulation.py` / `vehicle.py` / `lateral_dynamics.py`, with SI state and normalized controls; C++ replay shares the ROS2 core.
+- **Physical ECU:** `DynamicsECU` binds `DynamicsModel` to CAN/UDS; `DriverInput` uses throttle/brake 0..1 and front-wheel steering in radians.
 - **Protocol fixture:** `signal_model.py` generates synthetic ECU signals; `CoreECU` adds a simulation clock and UDS facade. It is not the calibrated physical plant.
 - **Transport:** `can_codec.py` owns encoding, `CANBus` delivers timestamp-ordered events, and `IsoTPChannel` owns segmentation, flow control and reassembly on both sides. UDS receives complete payloads.
 - **Scenarios and outputs:** `can_demo.py` composes those components. Pass `asc_log=None, dbc_path=None` for an advanced run without output files.
-- **Native FMU:** a separate experimental C signal model, packaged with the wheel. Its behavior is not covered by Python/C++ dynamics parity.
+- **Native FMU:** `ecu_fmu.cpp` wraps `dynamics_core.hpp`, the same C++17 physical kernel used by ROS2/replay. FMU and physical ECU replay are checked against Python at every sample.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Layer 1 — Python Analysis & Simulation                         │
 │  vehicle.py · lateral_dynamics.py · can_demo.py · uds.py        │
-│  243+ pytest cases · GitHub Actions CI (3.10/3.11/3.12 + mypy)  │
+│  pytest regression · CI (3.10/3.11/3.12 + mypy)                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 2 — C++ ROS2 Real-Time Nodes                             │
 │  vehicle_dynamics_node (rclcpp, 100 Hz)                         │
@@ -32,7 +72,7 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-The ROS2 dynamics node and a headless C++ replay executable share `dynamics.hpp`. Run `python scripts/compare_py_cpp.py --check` to compile that core, replay identical control samples in C++ and Python, and compare every output sample. Six maneuvers at two step sizes cover launch, coast, braking, left/right steering and braking to rest while turning. Missing samples, non-finite values, misaligned timestamps or excessive error fail the command and CI. This verifies the default linear-tire dynamics core, not ROS transport timing, UDS, FMU or real-vehicle accuracy.
+The ROS2 dynamics node and a headless C++ replay executable share `native/dynamics_core.hpp`. Run `python scripts/compare_py_cpp.py --check` to compile that core, replay identical control samples in C++ and Python, and compare every output sample. Six maneuvers at two step sizes cover launch, coast, braking, left/right steering and braking to rest while turning. Missing samples, non-finite values, misaligned timestamps or excessive error fail the command and CI. This verifies the default linear-tire dynamics core, not ROS transport timing or real-vehicle accuracy. `scripts/check_fmu_install.py` separately verifies the physical FMU, DynamicsECU and CAN/UDS observations with these same controls.
 
 See [dynamics validation and model limits](docs/dynamics_validation.md) and [module boundaries, units and simulation time](docs/architecture.md).
 
@@ -83,16 +123,11 @@ assert positions[-1] == (5, 1, 0)    # LSB
 
 This layout matches the DBC standard as implemented by Vector tooling and `cantools`: the DBC generated by `generate_dbc()` loads in `cantools` with no overlapping signals, and the bytes produced by `build_can_frame()` are identical to `cantools`' encoder. The regression tests in `tests/test_can_demo.py` verify both byte-level equality with `cantools` and bit-position assertions for Motorola/Intel signals.
 
-### 3. Model Validation — Self-Awareness Over Self-Promotion
+### 3. Independent Physical Verification
 
-The following comparisons expose model limitations; they are not independent vehicle certification:
+Closed-form solutions check constant-speed motion, rolling coast/stop, aerodynamic coast, braking distance and linear-bicycle steady turns at multiple speeds in both directions. Expected values do not call production force/integration helpers. An aerodynamic time-step refinement check measures first-order convergence. A regression intentionally reverses resistance to confirm the verifier detects a physical error.
 
-| Discrepancy | Actual | Model | Why |
-|---|---|---|---|
-| Civic 100–0 braking | 37.0 m | 43.7 m (+18%) | Braking uses `v²/(2μg)` with fixed μ=0.90. Real braking involves weight transfer (adds load to front axle → higher peak μ), brake force distribution, tire nonlinearity at the friction ellipse limit, and thermal fade resistance — none of which are modeled here. |
-| Tiguan 0–100 acceleration | 9.0 s | 10.7 s (+18.9%) | Starting from true rest exposes the simplified idle-torque launch model and uncalibrated torque/gear parameters. This exceeds the existing tolerance. |
-
-Every FAIL-to-PASS fix (Tiguan engine type, braking friction coefficient) is documented in the [CHANGELOG](CHANGELOG.md). The validation module exists to expose model limitations, not to pretend they don't exist.
+Python/C++/FMU agreement verifies adapter consistency; analytical solutions verify equations under stated assumptions. Neither is a measured real-car accuracy claim.
 
 ---
 
@@ -120,25 +155,15 @@ A 2-DOF (degrees of freedom) bicycle model computes slip angles at front and rea
 
 ---
 
-## Validation Against Published Vehicle Specifications
+## Validation Evidence and Model Limits
 
-The following is a reproducible sanity check against the repository’s stored benchmark values. The lateral targets are category estimates, not measured traces. With the corrected standstill launch, 7 of 9 checks pass; Camry and Tiguan acceleration fail the unchanged 15% tolerance. No parameters or tolerances were retuned to conceal those failures.
+Run `python scripts/validate_physics.py` for 34 independent analytical checks and a JSON report containing each expected value, error, unit and fixed tolerance. Run `python scripts/check_fmu_install.py --compiler c++ --output build/fmu/report.json` for 12 cases / 18,600 samples through the native FMU and physical ECU, plus 198 CAN/UDS observation checks.
 
-| Vehicle | Metric | Model | Benchmark | Error | Verdict |
-|--------:|--------|:-----:|:---------:|:-----:|:-------:|
-| Toyota Camry 2.0L | 0–100 km/h | 11.6 s | 9.5 s | +22.1% | FAIL |
-| Honda Civic 1.5T | 0–100 km/h | 7.8 s | 8.0 s | −2.5% | PASS |
-| VW Tiguan 2.0T | 0–100 km/h | 10.7 s | 9.0 s | +18.9% | FAIL |
-| Toyota Camry 2.0L | 100–0 km/h | 43.7 m | 39.0 m | +12.1% | PASS |
-| Honda Civic 1.5T | 100–0 km/h | 43.7 m | 37.0 m | +18.1% | PASS |
-| VW Tiguan 2.0T | 100–0 km/h | 43.7 m | 39.0 m | +12.1% | PASS |
-| Toyota Camry 2.0L | Kus gradient | 2.03 deg/g | 2.5 deg/g | −18.8% | PASS |
-| Honda Civic 1.5T | Kus gradient | 1.58 deg/g | 1.8 deg/g | −12.2% | PASS |
-| VW Tiguan 2.0T | Kus gradient | 1.61 deg/g | 2.0 deg/g | −19.5% | PASS |
+Legacy Camry/Civic/Tiguan benchmark values lack traceable trim/source/test-condition metadata and are **UNVERIFIED**. They no longer contribute a real-vehicle PASS rate. The source catalog records the exact 2021 Tiguan Allspace 1.5 TSI 110 kW manual trim from [Volkswagen's published technical data](https://www.volkswagen-newsroom.com/en/the-new-tiguan-allspace-test-drives-7543/technical-data-7556), with missing model parameters identified. A manufacturer specification alone cannot calibrate the torque curve, gear ratios or tires.
 
-The braking model uses a simplified kinematics formula (`v²/(2μg)`, μ=0.90 for dry asphalt with ABS) that does not account for weight transfer, brake fade, or tire nonlinearity, so braking distance is systematically slightly longer than published figures. Acceleration uses a normalized wide-open-throttle torque curve with fixed shift points (92% of redline); real-world launch control, turbo lag, and traction variations account for the remaining error.
+`scripts/compare_measured_trace.py` accepts external, aligned SI telemetry and simulation CSVs with declared provenance, conditions, units and error limits. No measured dataset is bundled, so real-vehicle accuracy remains **NOT_VALIDATED**. See [validation procedure](docs/dynamics_validation.md).
 
-Validation code and the full report are in [`src/vehicle_dynamics_toolkit/validation.py`](src/vehicle_dynamics_toolkit/validation.py).
+The reference plant uses a simplified powertrain, fixed 0.8g maximum brake command, linear tires and a kinematic approximation below 1 m/s. It does not model ABS, combined slip, load transfer or clutch transients. Coolant/SOC are held auxiliary values; synthetic wheel-speed noise and other demo signals are not a wheel/thermal/battery physics model.
 
 ---
 
@@ -181,12 +206,12 @@ python3 src/uds_server/scripts/uds_test_client.py EMS
 
 ## Tests
 
-**243 pytest cases** across 5 test modules, covering:
+Automated regressions cover:
 
 - **Vehicle dynamics** — engine torque, wheel force, acceleration (0–100 km/h), braking distance, resistance (SAE J2263 dynamic rolling), power breakdown by source, understeer gradient, characteristic/critical speed, steady-state cornering, step-steer transient response, Pacejka tire model (pure lateral slip in Python)
 - **CAN bus** — signal encode/decode (Motorola + Intel byte order), frame build/parse, multi-ECU simulation, DBC file generation, bus load calculation, overflow detection, edge cases
 - **UDS diagnostics** — DTC status byte, session state machine, ReadDataByIdentifier, ReadDTCInformation, ECUReset, SecurityAccess seed/key, negative response codes (NRC), service permission enforcement, ISO-TP multi-frame VIN read
-- **Real-world benchmarks** — validation against Camry, Civic, Tiguan published data
+- **Physical verification and integration** — independent analytical solutions, trace comparator rejection cases, physical ECU time/units, native FMU lifecycle and cross-adapter parity
 
 CI runs on GitHub Actions with a Python version matrix (3.10, 3.11, 3.12) plus `mypy` static type checking.
 
@@ -214,17 +239,23 @@ The ROS2 C++ build is also verified in CI — a separate job on `ubuntu-22.04` c
 │   ├── can_bus_load_demo.py       # Bus load analysis, overflow detection
 │   ├── uds.py                     # UDS (ISO 14229) diagnostic stack (Python reference)
 │   ├── iso_tp.py                   # ISO 15765-2 multi-frame transport protocol
-│   ├── validation.py              # Real-vehicle benchmark validation + report
+│   ├── simulation.py             # SI physical state and normalized DriverInput
+│   ├── ecu.py                    # Synthetic CoreECU / physical DynamicsECU facades
+│   ├── physical_validation.py    # Independent closed-form physics checks
+│   ├── trace_validation.py       # Aligned external measured-trace comparison
+│   ├── native/dynamics_core.hpp  # Canonical C++ physics for ROS2, replay and FMU
+│   ├── native/ecu_fmu.cpp        # FMI 2.0 physical adapter
+│   ├── validation.py              # Benchmark provenance and evidence-level report
 │   ├── plot_dashboard.py          # Multi-panel dashboard
 │   ├── plotting.py                # Visualization utilities
 │   └── _plot_utils.py             # matplotlib helpers
 │
 ├── tests/
-│   ├── test_vehicle_dynamics.py   # 109 tests — longitudinal + lateral + benchmarks
-│   ├── test_can_demo.py           # 42 tests — CAN encode/decode, DBC, ECU simulation
-│   ├── test_uds.py                # 31 tests — UDS session, SecurityAccess, DTC
-│   ├── test_iso_tp.py              # 32 tests — ISO-TP frames, receiver, UDS VIN
-│   └── test_can_bus_load.py       # 28 tests — bus load, baud rate, edge cases
+│   ├── test_vehicle_dynamics.py   # longitudinal + lateral + benchmarks
+│   ├── test_can_demo.py           # CAN encode/decode, DBC, ECU simulation
+│   ├── test_uds.py                # UDS session, SecurityAccess, DTC
+│   ├── test_iso_tp.py              # ISO-TP frames, receiver, UDS VIN
+│   └── test_can_bus_load.py       # bus load, baud rate, edge cases
 │
 ├── ros2_ws/                       # ROS2 workspace (C++ + Python)
 │   └── src/

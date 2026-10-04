@@ -39,6 +39,20 @@ class DynamicsState:
     engine_torque: float = 0.0
 
 
+@dataclass(frozen=True)
+class DriverInput:
+    """Physical driver command: throttle/brake 0..1, front-wheel steer radians."""
+    throttle: float = 0.0
+    brake: float = 0.0
+    steer: float = 0.0
+
+    def __post_init__(self) -> None:
+        if (not all(math.isfinite(x) for x in (self.throttle, self.brake, self.steer))
+                or not 0 <= self.throttle <= 1 or not 0 <= self.brake <= 1
+                or abs(self.steer) > .7):
+            raise ValueError("normalized finite throttle/brake and steering within +/-0.7 rad required")
+
+
 class DynamicsModel:
     def __init__(self, vehicle: Vehicle | None = None, initial_vx: float = 0.0):
         if not math.isfinite(initial_vx) or initial_vx < 0:

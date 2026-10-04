@@ -25,22 +25,7 @@ FIELDS = ["t", "vx", "ax", "vy", "ay", "yaw_rate", "heading",
 INPUT_FIELDS = ["case", "step", "dt", "initial_vx", "throttle", "brake", "steer"]
 
 
-def scenario_rows():
-    """Shared controls: six maneuvers, each at two step sizes."""
-    for dt in (0.01, 0.005):
-        for name, duration, initial_vx in (
-            ("launch", 30, 0), ("coast", 10, 20), ("brake", 7, 20),
-            ("left", 5, 20), ("right", 5, 20), ("stop_turn", 5, 3),
-        ):
-            for step in range(1, round(duration / dt) + 1):
-                t = (step - 1) * dt
-                throttle = 0.5 if name == "launch" else 0.2 if name in ("left", "right") else 0.0
-                brake = 0.8 if name == "brake" else 0.3 if name == "stop_turn" else 0.0
-                steer = (0.02 if name == "left" else -0.02 if name == "right" else 0.0) if t >= 1 else 0.0
-                if name == "stop_turn":
-                    steer = 0.05
-                yield dict(case=f"{name}_{dt}", step=step, dt=dt, initial_vx=initial_vx,
-                           throttle=throttle, brake=brake, steer=steer)
+from vehicle_dynamics_toolkit.scenarios import scenario_rows
 
 
 def generate_reference(directory: Path) -> tuple[Path, Path]:
@@ -124,7 +109,8 @@ def compile_runner(directory: Path, compiler: str | None) -> Path:
         command.append("c++")
     runner = (directory / ("dynamics_runner.exe" if os.name == "nt" else "dynamics_runner")).resolve()
     command += ["-std=c++17", "-O2", "-Wall", "-Wextra", "-I",
-                str(ROOT / "ros2_ws/src/vehicle_dynamics_node/include"),
+                str(ROOT / "ros2_ws/src/vehicle_dynamics_node/include"), "-I",
+                str(ROOT / "src/vehicle_dynamics_toolkit/native"),
                 str(ROOT / "ros2_ws/src/vehicle_dynamics_node/src/dynamics_runner.cpp"), "-o", str(runner)]
     log = directory / "compile.log"
     with log.open("w", encoding="utf-8") as output:
